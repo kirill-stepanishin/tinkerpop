@@ -39,7 +39,10 @@ func getEnv(key, defaultValue string) string {
 }
 
 func main() {
-	driverRemoteConnection, err := gremlingo.NewDriverRemoteConnection(serverURL)
+	driverRemoteConnection, err := gremlingo.NewDriverRemoteConnection(serverURL,
+		func(settings *gremlingo.DriverRemoteConnectionSettings) {
+			settings.TraversalSource = "gmodern"
+		})
 	if err != nil {
 		fmt.Println(err)
 		return
