@@ -29,17 +29,16 @@ import (
 var __ = gremlingo.T__
 var T = gremlingo.T
 var P = gremlingo.P
+var serverURL = getEnv("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
 
-func getEnvOrDefaultString(key string, defaultValue string) string {
-	value := os.Getenv(key)
-	if len(value) != 0 {
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
 }
 
 func main() {
-	serverURL := getEnvOrDefaultString("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
 	driverRemoteConnection, err := gremlingo.NewDriverRemoteConnection(serverURL)
 	if err != nil {
 		fmt.Println(err)

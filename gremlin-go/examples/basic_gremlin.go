@@ -26,17 +26,17 @@ import (
 	"github.com/apache/tinkerpop/gremlin-go/v3/driver"
 )
 
-func getEnvOrDefaultString(key string, defaultValue string) string {
-	value := os.Getenv(key)
-	if len(value) != 0 {
+var serverURL = getEnv("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
+var vertexLabel = getEnv("VERTEX_LABEL", "person")
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
 }
 
 func main() {
-	serverURL := getEnvOrDefaultString("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
-	vertexLabel := getEnvOrDefaultString("VERTEX_LABEL", "person")
 	driverRemoteConnection, err := gremlingo.NewDriverRemoteConnection(serverURL)
 	if err != nil {
 		fmt.Println(err)

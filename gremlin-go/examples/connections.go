@@ -26,9 +26,11 @@ import (
 	"github.com/apache/tinkerpop/gremlin-go/v3/driver"
 )
 
-func getEnvOrDefaultString(key string, defaultValue string) string {
-	value := os.Getenv(key)
-	if len(value) != 0 {
+var serverURL = getEnv("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
+var vertexLabel = getEnv("VERTEX_LABEL", "connection")
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
@@ -40,9 +42,6 @@ func main() {
 }
 
 func withRemote() {
-	serverURL := getEnvOrDefaultString("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
-	vertexLabel := getEnvOrDefaultString("VERTEX_LABEL", "connection")
-
 	// Creating the connection to the server
 	driverRemoteConnection, err := gremlingo.NewDriverRemoteConnection(serverURL)
 
@@ -60,17 +59,11 @@ func withRemote() {
 
 	// Simple query to verify connection
 	g.AddV(vertexLabel).Iterate()
-	count, _ := g.V().Count().Next()
+	count, _ := g.V().HasLabel(vertexLabel).Count().Next()
 	fmt.Println("Vertex count:", *count)
-
-	// clean added data
-	g.V().HasLabel(vertexLabel).Drop().Iterate()
 }
 
 func withConfigs() {
-	serverURL := getEnvOrDefaultString("GREMLIN_SERVER_URL", "ws://localhost:8182/gremlin")
-	vertexLabel := getEnvOrDefaultString("VERTEX_LABEL", "connection")
-
 	// Connecting to the server with customized configurations
 	driverRemoteConnection, err := gremlingo.NewDriverRemoteConnection(serverURL,
 		func(settings *gremlingo.DriverRemoteConnectionSettings) {
@@ -90,6 +83,6 @@ func withConfigs() {
 	g := gremlingo.Traversal_().WithRemote(driverRemoteConnection)
 
 	g.AddV(vertexLabel).Iterate()
-	count, _ := g.V().Count().Next()
+	count, _ := g.V().HasLabel(vertexLabel).Count().Next()
 	fmt.Println("Vertex count:", *count)
 }
