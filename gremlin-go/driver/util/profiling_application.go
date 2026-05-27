@@ -22,6 +22,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -152,10 +153,10 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		initializeGraph(url, poolSize)
 	}
 
-	// Warmup
 	fmt.Println("---------------------------WARMUP CYCLE---------------------------")
 	warmupRequests := 1000
 	var totalWarmupRps float64
+	thresholdDuration := time.Duration(tooSlowThreshold) * time.Millisecond
 
 	for i := 0; i < warmups; i++ {
 		client, err := createClient(url, poolSize)
@@ -193,14 +194,15 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgWarmupRps := totalWarmupRps / float64(warmups)
-	if avgWarmupRps < float64(minExpectedRps) && !exercise {
-		fmt.Printf("avg req/sec during warmup (%.0f) is below minimum expected (%d), skipping test cycles\n",
-			avgWarmupRps, minExpectedRps)
-		return
+	if warmups > 0 {
+		avgWarmupRps := totalWarmupRps / float64(warmups)
+		if avgWarmupRps < float64(minExpectedRps) && !exercise {
+			fmt.Printf("avg req/sec during warmup (%.0f) is below minimum expected (%d), skipping test cycles\n",
+				avgWarmupRps, minExpectedRps)
+			return
+		}
 	}
 
-	// Test cycles
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
 	var totalRps float64
 	testStart := time.Now()
@@ -240,8 +242,7 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 						atomic.AddInt64(&errors, 1)
 					}
 				}
-				reqElapsed := time.Since(reqStart).Milliseconds()
-				if reqElapsed > int64(tooSlowThreshold) {
+				if time.Since(reqStart) > thresholdDuration {
 					atomic.AddInt64(&tooSlow, 1)
 				}
 			}()
@@ -264,11 +265,13 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgRps := int(math.Round(totalRps / float64(executions)))
-	fmt.Printf("avg req/sec: %d\n", avgRps)
+	if executions > 0 {
+		avgRps := int(math.Round(totalRps / float64(executions)))
+		fmt.Printf("avg req/sec: %d\n", avgRps)
 
-	if store != "" {
-		writeStore(store, parallelism, poolSize, avgRps)
+		if store != "" {
+			writeStore(store, parallelism, poolSize, avgRps)
+		}
 	}
 }
 
@@ -282,7 +285,6 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		initializeGraph(url, poolSize)
 	}
 
-	// Warmup
 	fmt.Println("---------------------------WARMUP CYCLE---------------------------")
 	timeoutSec := float64(timeout) / 1000.0
 
@@ -312,7 +314,6 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	// Test cycles
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
 	var totalLatency float64
 	testStart := time.Now()
@@ -346,29 +347,23 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgLatency := totalLatency / float64(executions)
-	fmt.Printf("avg latency (sec/req): %.6f\n", avgLatency)
+	if executions > 0 {
+		avgLatency := totalLatency / float64(executions)
+		fmt.Printf("avg latency (sec/req): %.6f\n", avgLatency)
+	}
 }
 
 func writeStore(storePath string, parallelism, poolSize, rps int) {
-	var f *os.File
-	var err error
-
-	if _, statErr := os.Stat(storePath); os.IsNotExist(statErr) {
-		f, err = os.Create(storePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating store file: %v\n", err)
-			return
-		}
-		fmt.Fprintf(f, "parallelism\tpool_size\trequest_per_second\n")
-	} else {
-		f, err = os.OpenFile(storePath, os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening store file: %v\n", err)
-			return
-		}
+	f, err := os.OpenFile(storePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening store file: %v\n", err)
+		return
 	}
 	defer f.Close()
 
+	pos, _ := f.Seek(0, io.SeekCurrent)
+	if pos == 0 {
+		fmt.Fprintf(f, "parallelism\tpool_size\trequest_per_second\n")
+	}
 	fmt.Fprintf(f, "%d\t%d\t%d\n", parallelism, poolSize, rps)
 }

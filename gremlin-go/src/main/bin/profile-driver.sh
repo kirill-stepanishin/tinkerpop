@@ -24,7 +24,7 @@ GO_DIR="$SCRIPT_DIR/../../../"
 cd "$GO_DIR" || exit 1
 
 # Build the profiling application
-go build -o profiling_application ./driver/util/
+go build -o profiling_application ./driver/util/ || exit 1
 
 # Run the profiling application with all passed arguments
 exec ./profiling_application "$@"
