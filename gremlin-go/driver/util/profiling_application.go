@@ -22,7 +22,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -205,6 +204,7 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
 	var totalRps float64
+	var completedExecs int
 	testStart := time.Now()
 
 	for i := 0; i < executions; i++ {
@@ -252,6 +252,7 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		elapsed := time.Since(start).Seconds()
 		rps := float64(requests) / elapsed
 		totalRps += rps
+		completedExecs++
 
 		if exercise {
 			fmt.Printf("[test-%d]   requests: %d | time(s): %.3f    | req/sec: %d   | too slow: N/A | errors: %d\n",
@@ -265,8 +266,8 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	if executions > 0 {
-		avgRps := int(math.Round(totalRps / float64(executions)))
+	if completedExecs > 0 {
+		avgRps := int(math.Round(totalRps / float64(completedExecs)))
 		fmt.Printf("avg req/sec: %d\n", avgRps)
 
 		if store != "" {
@@ -316,6 +317,7 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
 	var totalLatency float64
+	var completedExecs int
 	testStart := time.Now()
 
 	for i := 0; i < executions; i++ {
@@ -340,6 +342,7 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		}
 		elapsed := time.Since(start).Seconds()
 		totalLatency += elapsed
+		completedExecs++
 
 		fmt.Printf("[test-%d]  time: %.6f, result count: %d\n", i+1, elapsed, resultCount)
 
@@ -347,13 +350,16 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	if executions > 0 {
-		avgLatency := totalLatency / float64(executions)
+	if completedExecs > 0 {
+		avgLatency := totalLatency / float64(completedExecs)
 		fmt.Printf("avg latency (sec/req): %.6f\n", avgLatency)
 	}
 }
 
 func writeStore(storePath string, parallelism, poolSize, rps int) {
+	fi, statErr := os.Stat(storePath)
+	writeHeader := statErr != nil || fi.Size() == 0
+
 	f, err := os.OpenFile(storePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening store file: %v\n", err)
@@ -361,8 +367,7 @@ func writeStore(storePath string, parallelism, poolSize, rps int) {
 	}
 	defer f.Close()
 
-	pos, _ := f.Seek(0, io.SeekCurrent)
-	if pos == 0 {
+	if writeHeader {
 		fmt.Fprintf(f, "parallelism\tpool_size\trequest_per_second\n")
 	}
 	fmt.Fprintf(f, "%d\t%d\t%d\n", parallelism, poolSize, rps)
