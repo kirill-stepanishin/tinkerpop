@@ -22,6 +22,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -79,14 +80,14 @@ func main() {
 	executions := flag.Int("executions", 10, "Number of test iterations")
 	requests := flag.Int("requests", 10000, "Number of requests per iteration")
 	script := flag.String("script", "g.inject(1)", "Gremlin script to execute")
-	exercise := flag.Bool("exercise", false, "Exercise mode using multiple scripts")
+	exercise := flag.Bool("exercise", false, "Exercise mode with Modern graph scripts")
 	poolSize := flag.Int("pool-size", 8, "Connection pool size")
 	tooSlowThreshold := flag.Int("too-slow-threshold", 125, "Too slow threshold in ms")
 	timeout := flag.Int("timeout", 1200000, "Timeout in ms")
 	minExpectedRps := flag.Int("min-expected-rps", 1000, "Minimum expected requests per second")
 	pauseBetweenRuns := flag.Int("pause-between-runs", 1000, "Pause between runs in ms")
 	store := flag.String("store", "", "TSV output file path")
-	_ = flag.Bool("no-exit", false, "Do not exit after completion")
+	noExit := flag.Bool("no-exit", false, "Do not exit after completion")
 
 	flag.Parse()
 
@@ -94,64 +95,73 @@ func main() {
 
 	chooser := newScriptChooser(*exercise, *script)
 
-	createClient := func() (*gremlingo.Client, error) {
-		ps := *poolSize
-		return gremlingo.NewClient(url, func(settings *gremlingo.ClientSettings) {
-			settings.MaximumConcurrentConnections = ps
-		})
-	}
-
 	switch *testType {
 	case "throughput":
-		runThroughputTest(createClient, chooser, *warmups, *executions, *requests,
-			*parallelism, *tooSlowThreshold, *timeout, *minExpectedRps,
-			*pauseBetweenRuns, *exercise, *poolSize, *store)
+		runThroughputTest(url, *parallelism, *warmups, *executions, *requests,
+			*exercise, *poolSize, *tooSlowThreshold, *timeout, *minExpectedRps,
+			*pauseBetweenRuns, *store, chooser)
 	case "latency":
-		runLatencyTest(createClient, chooser, *warmups, *executions, *timeout,
-			*pauseBetweenRuns, *exercise)
+		runLatencyTest(url, *warmups, *executions, *exercise, *poolSize,
+			*timeout, *pauseBetweenRuns, chooser)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown test type: %s\n", *testType)
 		os.Exit(1)
 	}
+
+	if *noExit {
+		select {}
+	}
 }
 
-func runThroughputTest(createClient func() (*gremlingo.Client, error), chooser *scriptChooser,
-	warmups, executions, requests, parallelism, tooSlowThreshold, timeout, minExpectedRps,
-	pauseBetweenRuns int, exercise bool, poolSize int, store string) {
+func createClient(url string, poolSize int) (*gremlingo.Client, error) {
+	return gremlingo.NewClient(url, func(settings *gremlingo.ClientSettings) {
+		settings.MaximumConcurrentConnections = poolSize
+	})
+}
+
+func initializeGraph(url string, poolSize int) {
+	client, err := createClient(url, poolSize)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating client for initialization: %v\n", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+
+	rs, err := client.Submit("graph.clear()")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error clearing graph: %v\n", err)
+		os.Exit(1)
+	}
+	_, _ = rs.All()
+
+	rs, err = client.Submit("TinkerFactory.generateModern(graph)")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating modern graph: %v\n", err)
+		os.Exit(1)
+	}
+	_, _ = rs.All()
+}
+
+func runThroughputTest(url string, parallelism, warmups, executions, requests int,
+	exercise bool, poolSize, tooSlowThreshold, timeout, minExpectedRps,
+	pauseBetweenRuns int, store string, chooser *scriptChooser) {
 
 	fmt.Println("-----------------------THROUGHPUT TEST SELECTED--------------------")
 
 	if exercise {
 		fmt.Println("--------------------------INITIALIZATION--------------------------")
-		client, err := createClient()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
-			os.Exit(1)
-		}
-		rs, err := client.Submit("graph.clear()")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to clear graph: %v\n", err)
-			os.Exit(1)
-		}
-		rs.All()
-		rs, err = client.Submit("TinkerFactory.generateModern(graph)")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to generate modern graph: %v\n", err)
-			os.Exit(1)
-		}
-		rs.All()
-		client.Close()
+		initializeGraph(url, poolSize)
 	}
 
 	fmt.Println("---------------------------WARMUP CYCLE---------------------------")
-
-	var warmupRpsTotal float64
 	warmupRequests := 1000
+	var totalWarmupRps float64
+	thresholdDuration := time.Duration(tooSlowThreshold) * time.Millisecond
 
 	for i := 0; i < warmups; i++ {
-		client, err := createClient()
+		client, err := createClient(url, poolSize)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create client for warmup: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error creating client for warmup: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -159,24 +169,24 @@ func runThroughputTest(createClient func() (*gremlingo.Client, error), chooser *
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, parallelism)
 
-		for j := 0; j < warmupRequests; j++ {
-			s := chooser.next()
+		for r := 0; r < warmupRequests; r++ {
 			wg.Add(1)
 			sem <- struct{}{}
-			go func(script string) {
+			go func() {
 				defer wg.Done()
 				defer func() { <-sem }()
-				rs, err := client.Submit(script)
+				s := chooser.next()
+				rs, err := client.Submit(s)
 				if err == nil {
-					rs.All()
+					_, _ = rs.All()
 				}
-			}(s)
+			}()
 		}
 		wg.Wait()
 
 		elapsed := time.Since(start).Seconds()
 		rps := float64(warmupRequests) / elapsed
-		warmupRpsTotal += rps
+		totalWarmupRps += rps
 		fmt.Printf("[warmup-%d] requests: %d | time(s): %.3f    | req/sec: %d\n",
 			i+1, warmupRequests, elapsed, int(math.Round(rps)))
 
@@ -184,167 +194,144 @@ func runThroughputTest(createClient func() (*gremlingo.Client, error), chooser *
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgWarmupRps := warmupRpsTotal / float64(warmups)
-	if avgWarmupRps < float64(minExpectedRps) && !exercise {
-		fmt.Printf("avg req/sec during warmup (%.0f) is below min expected (%d), skipping test cycles\n",
-			avgWarmupRps, minExpectedRps)
-		return
+	if warmups > 0 {
+		avgWarmupRps := totalWarmupRps / float64(warmups)
+		if avgWarmupRps < float64(minExpectedRps) && !exercise {
+			fmt.Printf("avg req/sec during warmup (%.0f) is below minimum expected (%d), skipping test cycles\n",
+				avgWarmupRps, minExpectedRps)
+			return
+		}
 	}
 
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
-
-	globalStart := time.Now()
-	var rpsTotal float64
+	var totalRps float64
+	testStart := time.Now()
 
 	for i := 0; i < executions; i++ {
-		if time.Since(globalStart).Milliseconds() > int64(timeout) {
-			fmt.Printf("Timeout reached, skipping remaining cycles\n")
+		if time.Since(testStart).Milliseconds() > int64(timeout) {
+			fmt.Printf("Timeout reached, skipping remaining test cycles\n")
 			break
 		}
 
-		client, err := createClient()
+		client, err := createClient(url, poolSize)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create client for test cycle: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error creating client for test: %v\n", err)
 			os.Exit(1)
 		}
 
-		var tooSlowCount int64
-		var errorCount int64
+		var tooSlow int64
+		var errors int64
+		start := time.Now()
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, parallelism)
-		thresholdDuration := time.Duration(tooSlowThreshold) * time.Millisecond
 
-		start := time.Now()
-
-		for j := 0; j < requests; j++ {
-			s := chooser.next()
+		for r := 0; r < requests; r++ {
 			wg.Add(1)
 			sem <- struct{}{}
-			go func(script string) {
+			go func() {
 				defer wg.Done()
 				defer func() { <-sem }()
 				reqStart := time.Now()
-				rs, err := client.Submit(script)
+				s := chooser.next()
+				rs, err := client.Submit(s)
 				if err != nil {
-					atomic.AddInt64(&errorCount, 1)
-					return
-				}
-				_, err = rs.All()
-				if err != nil {
-					atomic.AddInt64(&errorCount, 1)
-					return
+					atomic.AddInt64(&errors, 1)
+				} else {
+					_, err = rs.All()
+					if err != nil {
+						atomic.AddInt64(&errors, 1)
+					}
 				}
 				if time.Since(reqStart) > thresholdDuration {
-					atomic.AddInt64(&tooSlowCount, 1)
+					atomic.AddInt64(&tooSlow, 1)
 				}
-			}(s)
+			}()
 		}
 		wg.Wait()
 
 		elapsed := time.Since(start).Seconds()
 		rps := float64(requests) / elapsed
-		rpsTotal += rps
+		totalRps += rps
 
-		tooSlowStr := fmt.Sprintf("%d", atomic.LoadInt64(&tooSlowCount))
 		if exercise {
-			tooSlowStr = "N/A"
+			fmt.Printf("[test-%d]   requests: %d | time(s): %.3f    | req/sec: %d   | too slow: N/A | errors: %d\n",
+				i+1, requests, elapsed, int(math.Round(rps)), atomic.LoadInt64(&errors))
+		} else {
+			fmt.Printf("[test-%d]   requests: %d | time(s): %.3f    | req/sec: %d   | too slow: %d | errors: %d\n",
+				i+1, requests, elapsed, int(math.Round(rps)), atomic.LoadInt64(&tooSlow), atomic.LoadInt64(&errors))
 		}
-
-		fmt.Printf("[test-%d]   requests: %d | time(s): %.3f    | req/sec: %d   | too slow: %s | errors: %d\n",
-			i+1, requests, elapsed, int(math.Round(rps)), tooSlowStr, atomic.LoadInt64(&errorCount))
 
 		client.Close()
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgRps := int(math.Round(rpsTotal / float64(executions)))
-	fmt.Printf("avg req/sec: %d\n", avgRps)
+	if executions > 0 {
+		avgRps := int(math.Round(totalRps / float64(executions)))
+		fmt.Printf("avg req/sec: %d\n", avgRps)
 
-	if store != "" {
-		writeStore(store, parallelism, poolSize, avgRps)
+		if store != "" {
+			writeStore(store, parallelism, poolSize, avgRps)
+		}
 	}
 }
 
-func runLatencyTest(createClient func() (*gremlingo.Client, error), chooser *scriptChooser,
-	warmups, executions, timeout, pauseBetweenRuns int, exercise bool) {
+func runLatencyTest(url string, warmups, executions int, exercise bool,
+	poolSize, timeout, pauseBetweenRuns int, chooser *scriptChooser) {
 
 	fmt.Println("-----------------------LATENCY TEST SELECTED----------------------")
 
 	if exercise {
 		fmt.Println("--------------------------INITIALIZATION--------------------------")
-		client, err := createClient()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
-			os.Exit(1)
-		}
-		rs, err := client.Submit("graph.clear()")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to clear graph: %v\n", err)
-			os.Exit(1)
-		}
-		rs.All()
-		rs, err = client.Submit("TinkerFactory.generateModern(graph)")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to generate modern graph: %v\n", err)
-			os.Exit(1)
-		}
-		rs.All()
-		client.Close()
+		initializeGraph(url, poolSize)
 	}
 
 	fmt.Println("---------------------------WARMUP CYCLE---------------------------")
-
 	timeoutSec := float64(timeout) / 1000.0
-	var warmupLatencyTotal float64
 
 	for i := 0; i < warmups; i++ {
-		client, err := createClient()
+		client, err := createClient(url, poolSize)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create client for warmup: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error creating client for warmup: %v\n", err)
 			os.Exit(1)
 		}
 
-		s := chooser.next()
 		start := time.Now()
+		s := chooser.next()
 		rs, err := client.Submit(s)
 		if err == nil {
-			rs.All()
+			_, _ = rs.All()
 		}
 		elapsed := time.Since(start).Seconds()
-		warmupLatencyTotal += elapsed
-
 		fmt.Printf("[warmup-%d]  time: %.6f\n", i+1, elapsed)
 
 		client.Close()
+
+		if elapsed > timeoutSec {
+			fmt.Printf("Warmup latency (%.6f s) exceeds timeout (%.3f s), skipping test cycles\n",
+				elapsed, timeoutSec)
+			return
+		}
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgWarmupLatency := warmupLatencyTotal / float64(warmups)
-	if avgWarmupLatency > timeoutSec {
-		fmt.Printf("avg warmup latency (%.6f s) exceeds timeout (%.3f s), skipping test cycles\n",
-			avgWarmupLatency, timeoutSec)
-		return
-	}
-
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
-
-	globalStart := time.Now()
-	var latencyTotal float64
+	var totalLatency float64
+	testStart := time.Now()
 
 	for i := 0; i < executions; i++ {
-		if time.Since(globalStart).Milliseconds() > int64(timeout) {
-			fmt.Printf("Timeout reached, skipping remaining cycles\n")
+		if time.Since(testStart).Milliseconds() > int64(timeout) {
+			fmt.Printf("Timeout reached, skipping remaining test cycles\n")
 			break
 		}
 
-		client, err := createClient()
+		client, err := createClient(url, poolSize)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create client for test cycle: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error creating client for test: %v\n", err)
 			os.Exit(1)
 		}
 
-		s := chooser.next()
 		start := time.Now()
+		s := chooser.next()
 		rs, err := client.Submit(s)
 		var resultCount int
 		if err == nil {
@@ -352,7 +339,7 @@ func runLatencyTest(createClient func() (*gremlingo.Client, error), chooser *scr
 			resultCount = len(results)
 		}
 		elapsed := time.Since(start).Seconds()
-		latencyTotal += elapsed
+		totalLatency += elapsed
 
 		fmt.Printf("[test-%d]  time: %.6f, result count: %d\n", i+1, elapsed, resultCount)
 
@@ -360,29 +347,23 @@ func runLatencyTest(createClient func() (*gremlingo.Client, error), chooser *scr
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
 
-	avgLatency := latencyTotal / float64(executions)
-	fmt.Printf("avg latency (sec/req): %.6f\n", avgLatency)
+	if executions > 0 {
+		avgLatency := totalLatency / float64(executions)
+		fmt.Printf("avg latency (sec/req): %.6f\n", avgLatency)
+	}
 }
 
 func writeStore(storePath string, parallelism, poolSize, rps int) {
-	var f *os.File
-	var err error
-
-	if _, statErr := os.Stat(storePath); os.IsNotExist(statErr) {
-		f, err = os.Create(storePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create store file: %v\n", err)
-			return
-		}
-		fmt.Fprintf(f, "parallelism\tpool_size\trequest_per_second\n")
-	} else {
-		f, err = os.OpenFile(storePath, os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to open store file: %v\n", err)
-			return
-		}
+	f, err := os.OpenFile(storePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening store file: %v\n", err)
+		return
 	}
 	defer f.Close()
 
+	pos, _ := f.Seek(0, io.SeekCurrent)
+	if pos == 0 {
+		fmt.Fprintf(f, "parallelism\tpool_size\trequest_per_second\n")
+	}
 	fmt.Fprintf(f, "%d\t%d\t%d\n", parallelism, poolSize, rps)
 }
