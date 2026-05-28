@@ -268,6 +268,14 @@ async function runThroughputTest(args, url) {
   }
 }
 
+async function streamAndCount(client, script) {
+  let count = 0;
+  for await (const _ of client.stream(script, null)) {
+    count++;
+  }
+  return count;
+}
+
 async function runLatencyTest(args, url) {
   console.log('-----------------------LATENCY TEST SELECTED----------------------');
 
@@ -282,9 +290,8 @@ async function runLatencyTest(args, url) {
     const client = new Client(url);
     try {
       const start = performance.now();
-      const result = await client.submit(args.script, null);
+      const resultCount = await streamAndCount(client, args.script);
       const elapsed = (performance.now() - start) / 1000;
-      const resultCount = result.length;
       console.log(`[warmup-${w}]time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
 
       if (elapsed > args.timeout / 1000) {
@@ -312,9 +319,8 @@ async function runLatencyTest(args, url) {
     const client = new Client(url);
     try {
       const start = performance.now();
-      const result = await client.submit(args.script, null);
+      const resultCount = await streamAndCount(client, args.script);
       const elapsed = (performance.now() - start) / 1000;
-      const resultCount = result.length;
       totalTime += elapsed;
       completedExecutions++;
       console.log(`[test-${e}]  time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
