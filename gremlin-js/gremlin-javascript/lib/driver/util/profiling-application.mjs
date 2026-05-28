@@ -90,6 +90,7 @@ function parseArgs(argv) {
     minExpectedRps: 1000,
     pauseBetweenRuns: 1000,
     store: '',
+    stream: false,
     noExit: false,
   };
 
@@ -105,6 +106,7 @@ function parseArgs(argv) {
       case '--requests': args.requests = parseInt(argv[++i]); break;
       case '--script': args.script = argv[++i]; break;
       case '--exercise': args.exercise = true; break;
+      case '--stream': args.stream = true; break;
       case '--pool-size': args.poolSize = parseInt(argv[++i]); break;
       case '--too-slow-threshold': args.tooSlowThreshold = parseInt(argv[++i]); break;
       case '--timeout': args.timeout = parseInt(argv[++i]); break;
@@ -268,6 +270,11 @@ async function runThroughputTest(args, url) {
   }
 }
 
+async function submitAndCount(client, script) {
+  const result = await client.submit(script, null);
+  return result.length;
+}
+
 async function streamAndCount(client, script) {
   let count = 0;
   for await (const _ of client.stream(script, null)) {
@@ -278,6 +285,8 @@ async function streamAndCount(client, script) {
 
 async function runLatencyTest(args, url) {
   console.log('-----------------------LATENCY TEST SELECTED----------------------');
+
+  const executeQuery = args.stream ? streamAndCount : submitAndCount;
 
   if (args.exercise) {
     console.log('--------------------------INITIALIZATION--------------------------');
@@ -290,7 +299,7 @@ async function runLatencyTest(args, url) {
     const client = new Client(url);
     try {
       const start = performance.now();
-      const resultCount = await streamAndCount(client, args.script);
+      const resultCount = await executeQuery(client, args.script);
       const elapsed = (performance.now() - start) / 1000;
       console.log(`[warmup-${w}]time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
 
@@ -319,7 +328,7 @@ async function runLatencyTest(args, url) {
     const client = new Client(url);
     try {
       const start = performance.now();
-      const resultCount = await streamAndCount(client, args.script);
+      const resultCount = await executeQuery(client, args.script);
       const elapsed = (performance.now() - start) / 1000;
       totalTime += elapsed;
       completedExecutions++;
