@@ -143,10 +143,12 @@ function writeStore(storePath, parallelism, poolSize, rps) {
 async function initializeGraph(url) {
   const client = new Client(url);
   try {
-    await client.submit('graph.clear()', null);
-    console.log("Cleared existing 'graph'");
-    await client.submit('TinkerFactory.generateModern(graph)', null);
-    console.log('Modern graph loaded');
+    const result = await client.submit('g.V().count()', null);
+    const count = result.first();
+    if (count === 0) {
+      throw new Error('Graph is empty. Start the server with gremlin-server-modern.yaml to pre-load data.');
+    }
+    console.log(`Graph verified: ${count} vertices loaded`);
   } finally {
     await client.close();
   }
