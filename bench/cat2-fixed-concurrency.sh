@@ -22,7 +22,7 @@ run_tier() {
     testType 1 \
     host "$BENCH_HOST" \
     parallelism 16 \
-    requests 500000 \
+    requests 100000 \
     executions $EXECUTIONS \
     warmups $WARMUPS \
     maxConnectionPoolSize $C 2>&1 | tee "$RESULTS_DIR/java-c${C}.log"

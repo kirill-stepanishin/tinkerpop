@@ -16,7 +16,7 @@ run_java \
   testType 1 \
   host "$BENCH_HOST" \
   parallelism 16 \
-  requests 5000000 \
+  requests 100000 \
   executions $EXECUTIONS \
   warmups $WARMUPS \
   maxConnectionPoolSize 5000 2>&1 | tee "$RESULTS_DIR/java-peak.log"
@@ -38,7 +38,7 @@ run_go \
   --host "$BENCH_HOST" \
   --parallelism 256 \
   --pool-size 5000 \
-  --requests 500000 \
+  --requests 100000 \
   --executions $EXECUTIONS \
   --warmups $WARMUPS \
   --min-expected-rps 1 2>&1 | tee "$RESULTS_DIR/go-peak.log"
@@ -60,7 +60,7 @@ run_dotnet \
   --host "$BENCH_HOST" \
   --parallelism 256 \
   --pool-size 256 \
-  --requests 500000 \
+  --requests 100000 \
   --executions $EXECUTIONS \
   --warmups 10 \
   --min-expected-rps 1 2>&1 | tee "$RESULTS_DIR/dotnet-peak.log"
