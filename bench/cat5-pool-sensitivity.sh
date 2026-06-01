@@ -19,7 +19,7 @@ for POOL in 64 128 256 512 1000 2000 5000; do
     testType 1 \
     host "$BENCH_HOST" \
     parallelism 16 \
-    requests 500000 \
+    requests 100000 \
     executions $EXECUTIONS \
     warmups $WARMUPS \
     maxConnectionPoolSize $POOL
