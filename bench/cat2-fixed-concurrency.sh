@@ -34,7 +34,7 @@ run_tier() {
     testType 1 \
     host "$BENCH_HOST" \
     parallelism 16 \
-    requests 500000 \
+    requests 100000 \
     executions $EXECUTIONS \
     warmups $WARMUPS \
     minConnectionPoolSize $JAVA_POOL \

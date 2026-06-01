@@ -25,7 +25,7 @@ for C in 1 4 16 64 128 256 512; do
     testType 1 \
     host "$BENCH_HOST" \
     parallelism 16 \
-    requests 500000 \
+    requests 100000 \
     executions $EXECUTIONS \
     warmups $WARMUPS \
     minConnectionPoolSize $POOL \
