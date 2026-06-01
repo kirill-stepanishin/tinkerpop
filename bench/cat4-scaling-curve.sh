@@ -15,8 +15,12 @@ WARMUPS=3
 section "Java — Scaling"
 for C in 1 4 16 64 128 256 512; do
   echo "--- Java concurrency=$C ---"
-  POOL=$(( (C + 63) / 64 ))
-  [ $POOL -lt 1 ] && POOL=1
+  MAX_IP=$C
+  POOL=1
+  if [ $C -gt 64 ]; then
+    MAX_IP=64
+    POOL=$(( (C + 63) / 64 ))
+  fi
   run_java \
     testType 1 \
     host "$BENCH_HOST" \
@@ -26,8 +30,8 @@ for C in 1 4 16 64 128 256 512; do
     warmups $WARMUPS \
     minConnectionPoolSize $POOL \
     maxConnectionPoolSize $POOL \
-    maxInProcessPerConnection 64 \
-    minInProcessPerConnection 64
+    maxInProcessPerConnection $MAX_IP \
+    minInProcessPerConnection $MAX_IP
 done 2>&1 | tee "$RESULTS_DIR/java-scaling.log"
 
 section "Python — Scaling"
@@ -75,14 +79,18 @@ done 2>&1 | tee "$RESULTS_DIR/js-scaling.log"
 section ".NET — Scaling"
 for C in 1 4 16 64 128 256 512; do
   echo "--- .NET concurrency=$C ---"
-  POOL=$(( (C + 63) / 64 ))
-  [ $POOL -lt 1 ] && POOL=1
+  MAX_IP=$C
+  POOL=1
+  if [ $C -gt 64 ]; then
+    MAX_IP=64
+    POOL=$(( (C + 63) / 64 ))
+  fi
   run_dotnet \
     --test-type throughput \
     --host "$BENCH_HOST" \
     --parallelism $C \
     --pool-size $POOL \
-    --max-in-process 64 \
+    --max-in-process $MAX_IP \
     --requests 50000 \
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
