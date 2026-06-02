@@ -22,7 +22,7 @@ run_java() {
     echo "  SKIP: Java driver not built. Run: mvn install -pl gremlin-driver -am -DskipTests"
     return 1
   fi
-  "$JAVA_DIR/bin/profile-driver.sh" minExpectedRps 1 timeout 600000 "$@"
+  "$JAVA_DIR/bin/profile-driver.sh" minExpectedRps 1 "$@"
 }
 
 run_python() {
