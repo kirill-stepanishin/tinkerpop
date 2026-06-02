@@ -66,7 +66,7 @@ run_tier() {
     --host "$BENCH_HOST" \
     --parallelism $C \
     --pool-size $C \
-    --requests 500000 \
+    --requests 50000 \
     --executions $EXECUTIONS \
     --warmups 10 \
     --min-expected-rps 1 2>&1 | tee "$RESULTS_DIR/dotnet-c${C}.log"
