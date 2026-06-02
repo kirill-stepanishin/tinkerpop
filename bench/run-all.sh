@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run all benchmark categories for TinkerPop 3.7-dev.
 # Server must already be running 3.7-dev on $BENCH_HOST.
+# Estimated total time: ~90 minutes.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,10 +35,6 @@ run_go \
 echo "WARNING: Could not load graph. Load manually before latency tests."
 
 echo ""
-echo "▶ Category 2: Fixed Concurrency (~20 min)"
-"$SCRIPT_DIR/cat2-fixed-concurrency.sh"
-
-echo ""
 echo "▶ Category 3: Peak Throughput (~15 min)"
 "$SCRIPT_DIR/cat3-peak-throughput.sh"
 
@@ -46,11 +43,11 @@ echo "▶ Category 4: Scaling Curve (~30 min)"
 "$SCRIPT_DIR/cat4-scaling-curve.sh"
 
 echo ""
-echo "▶ Category 5: Pool Sensitivity (~20 min)"
+echo "▶ Category 5: Pool Sensitivity (~15 min)"
 "$SCRIPT_DIR/cat5-pool-sensitivity.sh"
 
 echo ""
-echo "▶ Category 1: Protocol Overhead (~30 min)"
+echo "▶ Category 1: Protocol Overhead (~20 min)"
 "$SCRIPT_DIR/cat1-protocol-overhead.sh"
 
 echo ""

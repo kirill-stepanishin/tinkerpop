@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Category 1: Protocol Overhead (Latency)
 # Sequential requests, pool=1. Measures per-request transport cost.
-# Tests: tiny (6 vertices), medium (~2.8M vertices)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,17 +18,8 @@ run_java \
   script "g.V()" \
   minConnectionPoolSize 1 \
   maxConnectionPoolSize 1 \
-  warmups 5 \
-  executions 5 2>&1 | tee "$RESULTS_DIR/java-latency-tiny.log"
-
-section "  Python"
-run_python \
-  --test-type latency \
-  --host "$BENCH_HOST" \
-  --script "g.V()" \
-  --pool-size 1 \
-  --warmups 5 \
-  --executions 5 2>&1 | tee "$RESULTS_DIR/python-latency-tiny.log"
+  warmups 3 \
+  executions 3 2>&1 | tee "$RESULTS_DIR/java-latency-tiny.log"
 
 section "  Go"
 run_go \
@@ -37,17 +27,8 @@ run_go \
   --host "$BENCH_HOST" \
   --script "g.V()" \
   --pool-size 1 \
-  --warmups 5 \
-  --executions 5 2>&1 | tee "$RESULTS_DIR/go-latency-tiny.log"
-
-section "  JavaScript"
-run_js \
-  --test-type latency \
-  --host "$BENCH_HOST" \
-  --script "g.V()" \
-  --pool-size 1 \
-  --warmups 5 \
-  --executions 5 2>&1 | tee "$RESULTS_DIR/js-latency-tiny.log"
+  --warmups 3 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/go-latency-tiny.log"
 
 section "  .NET"
 run_dotnet \
@@ -55,11 +36,30 @@ run_dotnet \
   --host "$BENCH_HOST" \
   --script "g.V()" \
   --pool-size 1 \
-  --warmups 5 \
-  --executions 5 2>&1 | tee "$RESULTS_DIR/dotnet-latency-tiny.log"
+  --warmups 3 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/dotnet-latency-tiny.log"
 
-# ─── Test 1b: Medium — ~2.8M vertices ───────────────────────────
-section "Test 1b: g.V().repeat(both()).times(12) — ~354K vertices"
+section "  JavaScript"
+run_js \
+  --test-type latency \
+  --host "$BENCH_HOST" \
+  --script "g.V()" \
+  --pool-size 1 \
+  --warmups 3 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/js-latency-tiny.log"
+
+section "  Python"
+run_python \
+  --test-type latency \
+  --host "$BENCH_HOST" \
+  --script "g.V()" \
+  --pool-size 1 \
+  --warmups 3 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/python-latency-tiny.log"
+
+# ─── Test 1b: Medium — ~354K vertices ───────────────────────────
+# Only Java/Go/.NET — JS and Python are too slow (1.4s and 7s per request)
+section "Test 1b: g.V().repeat(both()).times(12) — ~354K vertices (Java/Go/.NET only)"
 
 section "  Java"
 run_java \
@@ -72,16 +72,6 @@ run_java \
   executions 3 \
   timeout 600000 2>&1 | tee "$RESULTS_DIR/java-latency-medium.log"
 
-section "  Python"
-run_python \
-  --test-type latency \
-  --host "$BENCH_HOST" \
-  --script "g.V().repeat(both()).times(12)" \
-  --pool-size 1 \
-  --warmups 2 \
-  --executions 3 \
-  --timeout 600000 2>&1 | tee "$RESULTS_DIR/python-latency-medium.log"
-
 section "  Go"
 run_go \
   --test-type latency \
@@ -91,16 +81,6 @@ run_go \
   --warmups 2 \
   --executions 3 \
   --timeout 600000 2>&1 | tee "$RESULTS_DIR/go-latency-medium.log"
-
-section "  JavaScript"
-run_js \
-  --test-type latency \
-  --host "$BENCH_HOST" \
-  --script "g.V().repeat(both()).times(12)" \
-  --pool-size 1 \
-  --warmups 2 \
-  --executions 3 \
-  --timeout 600000 2>&1 | tee "$RESULTS_DIR/js-latency-medium.log"
 
 section "  .NET"
 run_dotnet \
