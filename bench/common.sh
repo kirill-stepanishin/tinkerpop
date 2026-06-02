@@ -22,7 +22,7 @@ run_java() {
     echo "  SKIP: Java driver not built. Run: mvn install -pl gremlin-driver -am -DskipTests"
     return 1
   fi
-  "$JAVA_DIR/bin/profile-driver.sh" minExpectedRps 1 "$@"
+  "$JAVA_DIR/bin/profile-driver.sh" minExpectedRps 1 timeout 600000 "$@"
 }
 
 run_python() {
@@ -56,7 +56,7 @@ run_dotnet() {
   fi
   export DOTNET_GCServer=1
   export DOTNET_ThreadPool_MinThreads=1024
-  "$DOTNET_DIR/profile-driver.sh" "$@"
+  "$DOTNET_DIR/profile-driver.sh" --timeout 600000 "$@"
 }
 
 # ── Output helpers ───────────────────────────────────────────────

@@ -15,11 +15,11 @@ WARMUPS=3
 section "Java — Scaling"
 for C in 1 4 16 64 128 256 512; do
   echo "--- Java concurrency=$C ---"
-  MAX_IP=$C
-  POOL=1
-  if [ $C -gt 64 ]; then
-    MAX_IP=64
-    POOL=$(( (C + 63) / 64 ))
+  MAX_IP=16
+  POOL=$(( (C + MAX_IP - 1) / MAX_IP ))
+  if [ $C -le $MAX_IP ]; then
+    MAX_IP=$C
+    POOL=1
   fi
   run_java \
     testType 1 \
@@ -79,11 +79,11 @@ done 2>&1 | tee "$RESULTS_DIR/js-scaling.log"
 section ".NET — Scaling"
 for C in 1 4 16 64 128 256 512; do
   echo "--- .NET concurrency=$C ---"
-  MAX_IP=$C
-  POOL=1
-  if [ $C -gt 64 ]; then
-    MAX_IP=64
-    POOL=$(( (C + 63) / 64 ))
+  MAX_IP=16
+  POOL=$(( (C + MAX_IP - 1) / MAX_IP ))
+  if [ $C -le $MAX_IP ]; then
+    MAX_IP=$C
+    POOL=1
   fi
   run_dotnet \
     --test-type throughput \

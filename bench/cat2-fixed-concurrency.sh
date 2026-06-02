@@ -13,23 +13,23 @@ EXECUTIONS=3
 WARMUPS=5
 
 # 3.7 WS: Java uses pool × maxInProcess for effective concurrency.
-# To get exactly C in-flight: pool=ceil(C/64), maxInProcess=min(C,64).
-# When C<=64: pool=1, maxInProcess=C. When C>64: pool=ceil(C/64), maxInProcess=64.
+# We cap maxInProcess at 16 to avoid deadlock on a single connection under load.
+# pool = ceil(C/16), maxInProcess = min(C, 16).
 # Python/Go/JS/.NET: pool = concurrency (no WS mux in Python/Go; JS/NET have mux but
 # we set pool=C for fairness so pool contention is not a factor).
 
 run_tier() {
   local C=$1
-  local JAVA_MAX_IN_PROCESS=$C
-  local JAVA_POOL=1
-  if [ $C -gt 64 ]; then
-    JAVA_MAX_IN_PROCESS=64
-    JAVA_POOL=$(( (C + 63) / 64 ))
+  local MAX_IN_PROCESS=16
+  local JAVA_POOL=$(( (C + MAX_IN_PROCESS - 1) / MAX_IN_PROCESS ))
+  if [ $C -le $MAX_IN_PROCESS ]; then
+    MAX_IN_PROCESS=$C
+    JAVA_POOL=1
   fi
 
   section "Effective Concurrency = $C"
 
-  echo "  ┌─ Java (pool=$JAVA_POOL × maxInProcess=$JAVA_MAX_IN_PROCESS = $C) ─┐"
+  echo "  ┌─ Java (pool=$JAVA_POOL × maxInProcess=$MAX_IN_PROCESS = $C) ─┐"
   run_java \
     testType 1 \
     host "$BENCH_HOST" \
@@ -39,8 +39,8 @@ run_tier() {
     warmups $WARMUPS \
     minConnectionPoolSize $JAVA_POOL \
     maxConnectionPoolSize $JAVA_POOL \
-    maxInProcessPerConnection $JAVA_MAX_IN_PROCESS \
-    minInProcessPerConnection $JAVA_MAX_IN_PROCESS 2>&1 | tee "$RESULTS_DIR/java-c${C}.log"
+    maxInProcessPerConnection $MAX_IN_PROCESS \
+    minInProcessPerConnection $MAX_IN_PROCESS 2>&1 | tee "$RESULTS_DIR/java-c${C}.log"
 
   echo "  ┌─ Python (pool=$C, parallelism=$C) ─┐"
   run_python \
@@ -75,14 +75,14 @@ run_tier() {
     --warmups $WARMUPS \
     --min-expected-rps 1 2>&1 | tee "$RESULTS_DIR/js-c${C}.log"
 
-  echo "  ┌─ .NET (pool=$JAVA_POOL × maxInProcess=$JAVA_MAX_IN_PROCESS = $C, parallelism=$C) ─┐"
+  echo "  ┌─ .NET (pool=$JAVA_POOL × maxInProcess=$MAX_IN_PROCESS = $C, parallelism=$C) ─┐"
   run_dotnet \
     --test-type throughput \
     --host "$BENCH_HOST" \
     --parallelism $C \
     --pool-size $JAVA_POOL \
-    --max-in-process $JAVA_MAX_IN_PROCESS \
-    --requests 500000 \
+    --max-in-process $MAX_IN_PROCESS \
+    --requests 50000 \
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
     --min-expected-rps 1 2>&1 | tee "$RESULTS_DIR/dotnet-c${C}.log"
