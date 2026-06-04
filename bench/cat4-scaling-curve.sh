@@ -17,8 +17,8 @@
 # under the License.
 
 # Category 4: Concurrency Scaling Curve
-# Sweep concurrency from 4 → 5000 (higher range for HTTP since pool=concurrency).
-# Also serves as the "fixed concurrency" comparison (replaces old Cat 2).
+# Sweep effective concurrency from 4 → 5000.
+# HTTP: pool = concurrency for all GLVs (one request per connection).
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,12 +27,10 @@ setup_output "cat4-scaling-curve"
 banner "Category 4: Concurrency Scaling Curve"
 
 EXECUTIONS=3
-WARMUPS=5
+WARMUPS=2
 
-# Request counts scaled by expected throughput.
 java_requests() {
   local C=$1
-  # Java 4.0 with pool=C scales well. At C=5000 expect ~35K req/sec.
   if [ $C -le 64 ]; then echo 100000
   else echo 500000
   fi
@@ -55,6 +53,7 @@ python_requests() {
   fi
 }
 
+# Java 4.0: HTTP, pool = concurrency. minConnectionPoolSize forces eager creation.
 section "Java — Scaling"
 for C in 4 16 64 256 512 1000 5000; do
   echo "--- Java concurrency=$C ---"
@@ -65,8 +64,9 @@ for C in 4 16 64 256 512 1000 5000; do
     requests $(java_requests $C) \
     executions $EXECUTIONS \
     warmups $WARMUPS \
+    minConnectionPoolSize $C \
     maxConnectionPoolSize $C
-done 2>&1 | tee "$RESULTS_DIR/java-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/java-scaling.log" || true
 
 section "Go — Scaling"
 for C in 4 16 64 128 256 512 1000; do
@@ -80,7 +80,7 @@ for C in 4 16 64 128 256 512 1000; do
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/go-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/go-scaling.log" || true
 
 section ".NET — Scaling"
 for C in 4 16 64 128 256 512 1000; do
@@ -92,9 +92,9 @@ for C in 4 16 64 128 256 512 1000; do
     --pool-size $C \
     --requests $(fast_glv_requests $C) \
     --executions $EXECUTIONS \
-    --warmups 10 \
+    --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log" || true
 
 section "JavaScript — Scaling"
 for C in 4 16 64 128 256; do
@@ -108,7 +108,7 @@ for C in 4 16 64 128 256; do
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/js-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/js-scaling.log" || true
 
 section "Python — Scaling"
 for C in 4 16 64 128 256; do
@@ -120,9 +120,9 @@ for C in 4 16 64 128 256; do
     --pool-size $C \
     --requests $(python_requests $C) \
     --executions $EXECUTIONS \
-    --warmups 2 \
+    --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/python-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/python-scaling.log" || true
 
 echo ""
 echo "═══ Category 4 Complete ═══"
