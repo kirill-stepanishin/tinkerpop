@@ -57,10 +57,6 @@ echo "▶ Category 4: Scaling Curve (~30 min)"
 "$SCRIPT_DIR/cat4-scaling-curve.sh"
 
 echo ""
-echo "▶ Category 5: Pool Sensitivity (~15 min)"
-"$SCRIPT_DIR/cat5-pool-sensitivity.sh"
-
-echo ""
 echo "▶ Category 1: Protocol Overhead (~20 min)"
 "$SCRIPT_DIR/cat1-protocol-overhead.sh"
 
