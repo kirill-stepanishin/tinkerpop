@@ -89,7 +89,7 @@ for C in 4 16 64 256 512 1000 5000; do
 done 2>&1 | tee "$RESULTS_DIR/java-scaling.log" || true
 
 section "Go — Scaling"
-for C in 4 16 64 128 256 512; do
+for C in 4 16 64 128 256 512 1000; do
   echo "--- Go concurrency=$C ---"
   run_go \
     --test-type throughput \
@@ -104,7 +104,7 @@ done 2>&1 | tee "$RESULTS_DIR/go-scaling.log" || true
 
 # .NET 3.7: WS multiplexing. pool × maxInProcess = C.
 section ".NET — Scaling"
-for C in 4 16 64 128 256 512; do
+for C in 4 16 64 128 256 512 1000; do
   echo "--- .NET concurrency=$C ---"
   MAX_IP=16
   POOL=$(( (C + MAX_IP - 1) / MAX_IP ))
