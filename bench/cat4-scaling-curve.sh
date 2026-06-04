@@ -126,7 +126,7 @@ done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log" || true
 
 # JS 3.7: WS multiplexing. parallelism = C, small pool.
 section "JavaScript — Scaling"
-for C in 4 16 64 128 256; do
+for C in 4 16 64 128 256 512 1000; do
   echo "--- JavaScript concurrency=$C ---"
   run_js \
     --test-type throughput \
@@ -141,7 +141,7 @@ done 2>&1 | tee "$RESULTS_DIR/js-scaling.log" || true
 
 # Python 3.7: no multiplexing. pool = C.
 section "Python — Scaling"
-for C in 4 16 64 128 256; do
+for C in 4 16 64 128 256 512 1000; do
   echo "--- Python concurrency=$C ---"
   run_python \
     --test-type throughput \
