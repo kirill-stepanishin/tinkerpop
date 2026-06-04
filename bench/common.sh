@@ -73,7 +73,7 @@ run_dotnet() {
   fi
   export DOTNET_GCServer=1
   export DOTNET_ThreadPool_MinThreads=1024
-  "$DOTNET_DIR/profile-driver.sh" "$@"
+  "$DOTNET_DIR/profile-driver.sh" --timeout 600000 "$@"
 }
 
 # ── Output helpers ───────────────────────────────────────────────

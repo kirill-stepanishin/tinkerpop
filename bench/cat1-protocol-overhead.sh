@@ -33,6 +33,7 @@ run_java \
   testType 0 \
   host "$BENCH_HOST" \
   script "g.V()" \
+  minConnectionPoolSize 1 \
   maxConnectionPoolSize 1 \
   warmups 2 \
   executions 3 2>&1 | tee "$RESULTS_DIR/java-latency-tiny.log" || true
@@ -81,6 +82,7 @@ run_java \
   testType 0 \
   host "$BENCH_HOST" \
   script "g.V().repeat(both()).times(12)" \
+  minConnectionPoolSize 1 \
   maxConnectionPoolSize 1 \
   warmups 2 \
   executions 3 \
