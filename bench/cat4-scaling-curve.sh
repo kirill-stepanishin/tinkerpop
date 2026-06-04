@@ -34,9 +34,10 @@ WARMUPS=3
 # Target: each test cycle runs 30-90 seconds.
 java_requests() {
   local C=$1
-  # Java at these concurrency levels does ~600-30000 req/sec
-  # Use 200K across the board (safe: 200K/30000=7s min, 200K/600=333s max → use timeout)
-  echo 200000
+  if [ $C -le 64 ]; then echo 100000
+  elif [ $C -le 512 ]; then echo 500000
+  else echo 500000
+  fi
 }
 
 fast_glv_requests() {
@@ -57,21 +58,10 @@ python_requests() {
   fi
 }
 
-# Java 3.7: pool × maxInProcess = C. Cap maxInProcess at 16 to avoid deadlock.
-# ALSO set parallelism = C so response-handler threads don't bottleneck.
-java_pool_args() {
-  local C=$1
-  local MAX_IP=16
-  local POOL=$(( (C + MAX_IP - 1) / MAX_IP ))
-  if [ $C -le $MAX_IP ]; then
-    MAX_IP=$C
-    POOL=1
-  fi
-  echo "minConnectionPoolSize $POOL maxConnectionPoolSize $POOL maxInProcessPerConnection $MAX_IP minInProcessPerConnection $MAX_IP parallelism $C"
-}
-
+# Java 3.7: pool=C with maxInProcess=1 gives effective concurrency = C.
+# Matches 4.0 where pool=C = C in-flight (HTTP 1:1).
 section "Java — Scaling"
-for C in 4 16 64 128 256 512; do
+for C in 4 16 64 256 512 1000 5000; do
   echo "--- Java concurrency=$C ---"
   run_java \
     testType 1 \
@@ -79,7 +69,13 @@ for C in 4 16 64 128 256 512; do
     requests $(java_requests $C) \
     executions $EXECUTIONS \
     warmups $WARMUPS \
-    $(java_pool_args $C)
+    parallelism 16 \
+    minConnectionPoolSize $C \
+    maxConnectionPoolSize $C \
+    minInProcessPerConnection 1 \
+    maxInProcessPerConnection 1 \
+    minSimultaneousUsagePerConnection 1 \
+    maxSimultaneousUsagePerConnection 1
 done 2>&1 | tee "$RESULTS_DIR/java-scaling.log"
 
 section "Go — Scaling"
