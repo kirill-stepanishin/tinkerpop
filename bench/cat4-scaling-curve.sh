@@ -17,9 +17,12 @@
 # under the License.
 
 # Category 4: Concurrency Scaling Curve
-# Sweep concurrency from 4 → 512. Pool = concurrency (no pool bottleneck).
-# Produces data for "req/s vs concurrency" chart per GLV.
-# Also serves as the "fixed concurrency" comparison (replaces old Cat 2).
+# Sweep effective concurrency from 4 → 5000.
+# Each GLV configured to achieve C in-flight requests using its native model:
+#   - Java: WS multiplexing (pool × maxInProcess = C)
+#   - Go/Python: pool = C (no multiplexing)
+#   - .NET: WS multiplexing (pool × maxInProcess = C)
+#   - JS: WS multiplexing (parallelism = C, small pool)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,10 +31,8 @@ setup_output "cat4-scaling-curve"
 banner "Category 4: Concurrency Scaling Curve"
 
 EXECUTIONS=3
-WARMUPS=3
+WARMUPS=2
 
-# Request counts scaled by expected throughput at each tier.
-# Target: each test cycle runs 30-90 seconds.
 java_requests() {
   local C=$1
   if [ $C -le 64 ]; then echo 100000
@@ -42,7 +43,6 @@ java_requests() {
 
 fast_glv_requests() {
   local C=$1
-  # Go/.NET/JS scale linearly: ~20*C req/sec
   if [ $C -le 8 ]; then echo 5000
   elif [ $C -le 32 ]; then echo 10000
   elif [ $C -le 128 ]; then echo 30000
@@ -58,25 +58,35 @@ python_requests() {
   fi
 }
 
-# Java 3.7: pool=C with maxInProcess=1 gives effective concurrency = C.
-# Matches 4.0 where pool=C = C in-flight (HTTP 1:1).
+# Java 3.7: WS multiplexing. effective concurrency = pool × maxInProcess.
+# nioPoolSize=4 to avoid single-thread NIO bottleneck.
+# maxSimultaneousUsagePerConnection matches maxInProcess to avoid borrow contention.
 section "Java — Scaling"
 for C in 4 16 64 256 512 1000 5000; do
   echo "--- Java concurrency=$C ---"
+  MAX_IP=64
+  POOL=$(( (C + MAX_IP - 1) / MAX_IP ))
+  if [ $C -le $MAX_IP ]; then
+    MAX_IP=$C
+    POOL=1
+  fi
+  PAR=16
+  if [ $C -ge 256 ]; then PAR=32; fi
   run_java \
     testType 1 \
     host "$BENCH_HOST" \
     requests $(java_requests $C) \
     executions $EXECUTIONS \
     warmups $WARMUPS \
-    parallelism 16 \
-    minConnectionPoolSize $C \
-    maxConnectionPoolSize $C \
-    minInProcessPerConnection 1 \
-    maxInProcessPerConnection 1 \
-    minSimultaneousUsagePerConnection 1 \
-    maxSimultaneousUsagePerConnection 1
-done 2>&1 | tee "$RESULTS_DIR/java-scaling.log"
+    parallelism $PAR \
+    nioPoolSize 4 \
+    minConnectionPoolSize $POOL \
+    maxConnectionPoolSize $POOL \
+    minInProcessPerConnection $MAX_IP \
+    maxInProcessPerConnection $MAX_IP \
+    minSimultaneousUsagePerConnection $MAX_IP \
+    maxSimultaneousUsagePerConnection $MAX_IP
+done 2>&1 | tee "$RESULTS_DIR/java-scaling.log" || true
 
 section "Go — Scaling"
 for C in 4 16 64 128 256 512; do
@@ -90,8 +100,9 @@ for C in 4 16 64 128 256 512; do
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/go-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/go-scaling.log" || true
 
+# .NET 3.7: WS multiplexing. pool × maxInProcess = C.
 section ".NET — Scaling"
 for C in 4 16 64 128 256 512; do
   echo "--- .NET concurrency=$C ---"
@@ -111,8 +122,9 @@ for C in 4 16 64 128 256 512; do
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log" || true
 
+# JS 3.7: WS multiplexing. parallelism = C, small pool.
 section "JavaScript — Scaling"
 for C in 4 16 64 128 256; do
   echo "--- JavaScript concurrency=$C ---"
@@ -120,13 +132,14 @@ for C in 4 16 64 128 256; do
     --test-type throughput \
     --host "$BENCH_HOST" \
     --parallelism $C \
-    --pool-size $C \
+    --pool-size 8 \
     --requests $(fast_glv_requests $C) \
     --executions $EXECUTIONS \
     --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/js-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/js-scaling.log" || true
 
+# Python 3.7: no multiplexing. pool = C.
 section "Python — Scaling"
 for C in 4 16 64 128 256; do
   echo "--- Python concurrency=$C ---"
@@ -137,9 +150,9 @@ for C in 4 16 64 128 256; do
     --pool-size $C \
     --requests $(python_requests $C) \
     --executions $EXECUTIONS \
-    --warmups 2 \
+    --warmups $WARMUPS \
     --min-expected-rps 1
-done 2>&1 | tee "$RESULTS_DIR/python-scaling.log"
+done 2>&1 | tee "$RESULTS_DIR/python-scaling.log" || true
 
 echo ""
 echo "═══ Category 4 Complete ═══"

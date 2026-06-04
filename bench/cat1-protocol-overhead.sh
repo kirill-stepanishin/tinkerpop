@@ -35,8 +35,8 @@ run_java \
   script "g.V()" \
   minConnectionPoolSize 1 \
   maxConnectionPoolSize 1 \
-  warmups 3 \
-  executions 3 2>&1 | tee "$RESULTS_DIR/java-latency-tiny.log"
+  warmups 2 \
+  executions 3 2>&1 | tee "$RESULTS_DIR/java-latency-tiny.log" || true
 
 section "  Go"
 run_go \
@@ -44,8 +44,8 @@ run_go \
   --host "$BENCH_HOST" \
   --script "g.V()" \
   --pool-size 1 \
-  --warmups 3 \
-  --executions 3 2>&1 | tee "$RESULTS_DIR/go-latency-tiny.log"
+  --warmups 2 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/go-latency-tiny.log" || true
 
 section "  .NET"
 run_dotnet \
@@ -53,8 +53,8 @@ run_dotnet \
   --host "$BENCH_HOST" \
   --script "g.V()" \
   --pool-size 1 \
-  --warmups 3 \
-  --executions 3 2>&1 | tee "$RESULTS_DIR/dotnet-latency-tiny.log"
+  --warmups 2 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/dotnet-latency-tiny.log" || true
 
 section "  JavaScript"
 run_js \
@@ -62,8 +62,8 @@ run_js \
   --host "$BENCH_HOST" \
   --script "g.V()" \
   --pool-size 1 \
-  --warmups 3 \
-  --executions 3 2>&1 | tee "$RESULTS_DIR/js-latency-tiny.log"
+  --warmups 2 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/js-latency-tiny.log" || true
 
 section "  Python"
 run_python \
@@ -71,8 +71,8 @@ run_python \
   --host "$BENCH_HOST" \
   --script "g.V()" \
   --pool-size 1 \
-  --warmups 3 \
-  --executions 3 2>&1 | tee "$RESULTS_DIR/python-latency-tiny.log"
+  --warmups 2 \
+  --executions 3 2>&1 | tee "$RESULTS_DIR/python-latency-tiny.log" || true
 
 # ─── Test 1b: Medium — ~354K vertices ───────────────────────────
 section "Test 1b: g.V().repeat(both()).times(12) — ~354K vertices"
@@ -86,7 +86,7 @@ run_java \
   maxConnectionPoolSize 1 \
   warmups 2 \
   executions 3 \
-  timeout 600000 2>&1 | tee "$RESULTS_DIR/java-latency-medium.log"
+  timeout 600000 2>&1 | tee "$RESULTS_DIR/java-latency-medium.log" || true
 
 section "  Go"
 run_go \
@@ -96,7 +96,7 @@ run_go \
   --pool-size 1 \
   --warmups 2 \
   --executions 3 \
-  --timeout 600000 2>&1 | tee "$RESULTS_DIR/go-latency-medium.log"
+  --timeout 600000 2>&1 | tee "$RESULTS_DIR/go-latency-medium.log" || true
 
 section "  .NET"
 run_dotnet \
@@ -106,7 +106,7 @@ run_dotnet \
   --pool-size 1 \
   --warmups 2 \
   --executions 3 \
-  --timeout 600000 2>&1 | tee "$RESULTS_DIR/dotnet-latency-medium.log"
+  --timeout 600000 2>&1 | tee "$RESULTS_DIR/dotnet-latency-medium.log" || true
 
 section "  JavaScript"
 run_js \
@@ -116,7 +116,7 @@ run_js \
   --pool-size 1 \
   --warmups 2 \
   --executions 3 \
-  --timeout 600000 2>&1 | tee "$RESULTS_DIR/js-latency-medium.log"
+  --timeout 600000 2>&1 | tee "$RESULTS_DIR/js-latency-medium.log" || true
 
 section "  Python"
 run_python \
@@ -126,7 +126,7 @@ run_python \
   --pool-size 1 \
   --warmups 2 \
   --executions 3 \
-  --timeout 600000 2>&1 | tee "$RESULTS_DIR/python-latency-medium.log"
+  --timeout 600000 2>&1 | tee "$RESULTS_DIR/python-latency-medium.log" || true
 
 echo ""
 echo "═══ Category 1 Complete ═══"
