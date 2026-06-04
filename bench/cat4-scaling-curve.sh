@@ -83,6 +83,7 @@ for C in 4 16 64 256 512 1000 5000; do
     maxConnectionPoolSize $POOL \
     minInProcessPerConnection 1 \
     maxInProcessPerConnection $MAX_IP \
+    minSimultaneousUsagePerConnection $MAX_IP \
     maxSimultaneousUsagePerConnection $MAX_IP
 done 2>&1 | tee "$RESULTS_DIR/java-scaling.log" || true
 
