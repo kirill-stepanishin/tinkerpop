@@ -20,7 +20,7 @@
 # Source this file; don't execute it directly.
 
 export BENCH_HOST="${BENCH_HOST:-16.59.222.63}"
-export BENCH_BASE_DIR="${BENCH_BASE_DIR:-$HOME/bench-results/4.0}"
+export BENCH_BASE_DIR="$HOME/bench-results/4.0"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
