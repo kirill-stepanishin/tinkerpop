@@ -54,13 +54,16 @@ python_requests() {
 }
 
 # Java 4.0: HTTP, pool = concurrency. minConnectionPoolSize forces eager creation.
+# parallelism must scale with C — submission threads are the concurrency driver for HTTP.
 section "Java — Scaling"
 for C in 4 16 64 256 512 1000 5000; do
   echo "--- Java concurrency=$C ---"
+  PAR=$C
+  if [ $PAR -gt 64 ]; then PAR=64; fi
   run_java \
     testType 1 \
     host "$BENCH_HOST" \
-    parallelism 16 \
+    parallelism $PAR \
     requests $(java_requests $C) \
     executions $EXECUTIONS \
     warmups $WARMUPS \
