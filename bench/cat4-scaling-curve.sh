@@ -60,8 +60,9 @@ python_requests() {
 }
 
 # Java 3.7: WS multiplexing. effective concurrency = pool × maxInProcess.
-# nioPoolSize=4 to avoid single-thread NIO bottleneck.
-# maxSimultaneousUsagePerConnection matches maxInProcess to avoid borrow contention.
+# CRITICAL: minInProcess must be << maxInProcess to avoid connection churn.
+# When minInProcess = maxInProcess, the pool replaces every busy connection
+# on every response (availableInProcess < minInProcess fires when pending > 0).
 section "Java — Scaling"
 for C in 4 16 64 256 512 1000 5000; do
   echo "--- Java concurrency=$C ---"
@@ -71,21 +72,17 @@ for C in 4 16 64 256 512 1000 5000; do
     MAX_IP=$C
     POOL=1
   fi
-  PAR=16
-  if [ $C -ge 256 ]; then PAR=32; fi
   run_java \
     testType 1 \
     host "$BENCH_HOST" \
     requests $(java_requests $C) \
     executions $EXECUTIONS \
     warmups $WARMUPS \
-    parallelism $PAR \
-    nioPoolSize 4 \
+    parallelism 16 \
     minConnectionPoolSize $POOL \
     maxConnectionPoolSize $POOL \
-    minInProcessPerConnection $MAX_IP \
+    minInProcessPerConnection 1 \
     maxInProcessPerConnection $MAX_IP \
-    minSimultaneousUsagePerConnection $MAX_IP \
     maxSimultaneousUsagePerConnection $MAX_IP
 done 2>&1 | tee "$RESULTS_DIR/java-scaling.log" || true
 
