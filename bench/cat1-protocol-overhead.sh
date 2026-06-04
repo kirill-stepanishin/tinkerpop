@@ -74,7 +74,7 @@ run_python \
   --executions 3 2>&1 | tee "$RESULTS_DIR/python-latency-tiny.log"
 
 # ─── Test 1b: Medium — ~354K vertices ───────────────────────────
-section "Test 1b: g.V().repeat(both()).times(12) — ~354K vertices (Java/Go/.NET only)"
+section "Test 1b: g.V().repeat(both()).times(12) — ~354K vertices"
 
 section "  Java"
 run_java \
@@ -105,6 +105,26 @@ run_dotnet \
   --warmups 2 \
   --executions 3 \
   --timeout 600000 2>&1 | tee "$RESULTS_DIR/dotnet-latency-medium.log"
+
+section "  JavaScript"
+run_js \
+  --test-type latency \
+  --host "$BENCH_HOST" \
+  --script "g.V().repeat(both()).times(12)" \
+  --pool-size 1 \
+  --warmups 2 \
+  --executions 3 \
+  --timeout 600000 2>&1 | tee "$RESULTS_DIR/js-latency-medium.log"
+
+section "  Python"
+run_python \
+  --test-type latency \
+  --host "$BENCH_HOST" \
+  --script "g.V().repeat(both()).times(12)" \
+  --pool-size 1 \
+  --warmups 2 \
+  --executions 3 \
+  --timeout 600000 2>&1 | tee "$RESULTS_DIR/python-latency-medium.log"
 
 echo ""
 echo "═══ Category 1 Complete ═══"
