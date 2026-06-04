@@ -44,16 +44,19 @@ java_requests() {
 
 fast_glv_requests() {
   local C=$1
-  if [ $C -le 8 ]; then echo 5000
-  elif [ $C -le 32 ]; then echo 10000
+  if [ $C -le 4 ]; then echo 1000
+  elif [ $C -le 16 ]; then echo 5000
+  elif [ $C -le 64 ]; then echo 10000
   elif [ $C -le 128 ]; then echo 30000
-  else echo 50000
+  elif [ $C -le 1000 ]; then echo 50000
+  else echo 500000
   fi
 }
 
 python_requests() {
   local C=$1
-  if [ $C -le 8 ]; then echo 1000
+  if [ $C -le 4 ]; then echo 500
+  elif [ $C -le 16 ]; then echo 1000
   elif [ $C -le 64 ]; then echo 3000
   else echo 5000
   fi
@@ -88,7 +91,7 @@ for C in 4 16 64 256 512 1000 5000; do
 done 2>&1 | tee "$RESULTS_DIR/java-scaling.log" || true
 
 section "Go — Scaling"
-for C in 4 16 64 128 256 512 1000; do
+for C in 4 16 64 128 256 512 1000 5000; do
   echo "--- Go concurrency=$C ---"
   run_go \
     --test-type throughput \
@@ -103,7 +106,7 @@ done 2>&1 | tee "$RESULTS_DIR/go-scaling.log" || true
 
 # .NET 3.7: WS multiplexing. pool × maxInProcess = C.
 section ".NET — Scaling"
-for C in 4 16 64 128 256 512 1000; do
+for C in 4 16 64 128 256 512 1000 5000; do
   echo "--- .NET concurrency=$C ---"
   MAX_IP=16
   POOL=$(( (C + MAX_IP - 1) / MAX_IP ))
