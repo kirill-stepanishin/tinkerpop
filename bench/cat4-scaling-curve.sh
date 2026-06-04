@@ -100,7 +100,7 @@ for C in 4 16 64 128 256 512 1000; do
 done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log" || true
 
 section "JavaScript — Scaling"
-for C in 4 16 64 128 256; do
+for C in 4 16 64 128 256 512 1000; do
   echo "--- JavaScript concurrency=$C ---"
   run_js \
     --test-type throughput \
@@ -114,7 +114,7 @@ for C in 4 16 64 128 256; do
 done 2>&1 | tee "$RESULTS_DIR/js-scaling.log" || true
 
 section "Python — Scaling"
-for C in 4 16 64 128 256; do
+for C in 4 16 64 128 256 512 1000; do
   echo "--- Python concurrency=$C ---"
   run_python \
     --test-type throughput \
