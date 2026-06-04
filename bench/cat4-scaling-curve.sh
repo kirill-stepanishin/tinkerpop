@@ -35,7 +35,8 @@ WARMUPS=2
 
 java_requests() {
   local C=$1
-  if [ $C -le 64 ]; then echo 100000
+  if [ $C -le 16 ]; then echo 5000
+  elif [ $C -le 64 ]; then echo 50000
   elif [ $C -le 512 ]; then echo 500000
   else echo 500000
   fi
