@@ -53,6 +53,10 @@ run_go \
 echo "WARNING: Could not load graph. Load manually before latency tests."
 
 echo ""
+echo "▶ Category 3: Java Peak Throughput (~10 min)"
+"$SCRIPT_DIR/cat3-peak-throughput.sh"
+
+echo ""
 echo "▶ Category 4: Scaling Curve (~30 min)"
 "$SCRIPT_DIR/cat4-scaling-curve.sh"
 
