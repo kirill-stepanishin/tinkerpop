@@ -79,7 +79,8 @@ run_dotnet() {
 # ── Output helpers ───────────────────────────────────────────────
 setup_output() {
   local category="$1"
-  RESULTS_DIR="$BENCH_BASE_DIR/$category"
+  export RUN_TS="${RUN_TS:-$(date -u +%Y%m%d-%H%M%S)}"
+  RESULTS_DIR="$BENCH_BASE_DIR/$category/$RUN_TS"
   mkdir -p "$RESULTS_DIR"
 }
 
