@@ -349,7 +349,14 @@ def main():
             cat_dir = version_dir / cat_name
             if not cat_dir.is_dir():
                 continue
-            rows = processor(version, cat_dir)
+            # Support timestamped subdirs: use latest, or read directly if logs are at cat_dir level
+            subdirs = sorted([d for d in cat_dir.iterdir() if d.is_dir()], reverse=True)
+            if subdirs and any(subdirs[0].glob('*.log')):
+                effective_dir = subdirs[0]
+                print(f"  {cat_name}: using run {effective_dir.name}")
+            else:
+                effective_dir = cat_dir
+            rows = processor(version, effective_dir)
             all_rows.extend(rows)
             print(f"  {cat_name}: {len(rows)} data points")
 
