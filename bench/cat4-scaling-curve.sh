@@ -54,7 +54,8 @@ python_requests() {
   if [ $C -le 4 ]; then echo 500
   elif [ $C -le 16 ]; then echo 1000
   elif [ $C -le 64 ]; then echo 3000
-  else echo 5000
+  elif [ $C -le 1000 ]; then echo 5000
+  else echo 10000
   fi
 }
 
@@ -105,7 +106,7 @@ for C in 4 16 64 128 256 512 1000 5000; do
 done 2>&1 | tee "$RESULTS_DIR/dotnet-scaling.log" || true
 
 section "JavaScript — Scaling"
-for C in 4 16 64 128 256 512 1000; do
+for C in 4 16 64 128 256 512 1000 5000; do
   echo "--- JavaScript concurrency=$C ---"
   run_js \
     --test-type throughput \
@@ -119,7 +120,7 @@ for C in 4 16 64 128 256 512 1000; do
 done 2>&1 | tee "$RESULTS_DIR/js-scaling.log" || true
 
 section "Python — Scaling"
-for C in 4 16 64 128 256 512 1000; do
+for C in 4 16 64 128 256 512 1000 5000; do
   echo "--- Python concurrency=$C ---"
   run_python \
     --test-type throughput \
