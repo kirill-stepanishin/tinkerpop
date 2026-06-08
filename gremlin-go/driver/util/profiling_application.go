@@ -20,6 +20,7 @@ under the License.
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -31,6 +32,26 @@ import (
 
 	gremlingo "github.com/apache/tinkerpop/gremlin-go/v4/driver"
 )
+
+// resultPayload is the single machine-readable result line (see bench/SCHEMA.md).
+// Field order mirrors the contract. concurrency is a *int so it serializes to
+// JSON null when not supplied (the orchestrator stamps the authoritative
+// concurrency into the ledger from the cell). The app performs no statistics;
+// measurements/errors hold raw per-execution values from the TEST CYCLE only
+// (warmups excluded).
+type resultPayload struct {
+	Glv          string    `json:"glv"`
+	Metric       string    `json:"metric"`
+	Script       string    `json:"script"`
+	Concurrency  *int      `json:"concurrency"`
+	Pool         int       `json:"pool"`
+	Parallelism  int       `json:"parallelism"`
+	Requests     int       `json:"requests"`
+	Warmups      int       `json:"warmups"`
+	Executions   int       `json:"executions"`
+	Measurements []float64 `json:"measurements"`
+	Errors       []int     `json:"errors"`
+}
 
 type scriptChooser struct {
 	mu       sync.Mutex
@@ -94,17 +115,46 @@ func main() {
 
 	chooser := newScriptChooser(*exercise, *script)
 
+	// Raw per-execution values collected during the TEST CYCLE only (warmups
+	// excluded). Echoed verbatim in the single RESULT_JSON line; no stats here.
+	// Initialized non-nil so they serialize to [] (not null) when the test
+	// cycle is skipped (warmup gate failed) or cut short (timeout).
+	measurements := []float64{}
+	errorsPerExecution := []int{}
+
 	switch *testType {
 	case "throughput":
-		runThroughputTest(url, *parallelism, *warmups, *executions, *requests,
+		measurements, errorsPerExecution = runThroughputTest(url, *parallelism, *warmups, *executions, *requests,
 			*exercise, *poolSize, *tooSlowThreshold, *timeout, *minExpectedRps,
 			*pauseBetweenRuns, *store, chooser)
 	case "latency":
-		runLatencyTest(url, *warmups, *executions, *exercise, *poolSize,
+		measurements, errorsPerExecution = runLatencyTest(url, *warmups, *executions, *exercise, *poolSize,
 			*timeout, *pauseBetweenRuns, chooser)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown test type: %s\n", *testType)
 		os.Exit(1)
+	}
+
+	// Single machine-readable result line (see bench/SCHEMA.md). Always printed
+	// exactly once. concurrency is emitted as JSON null; the orchestrator stamps
+	// the authoritative concurrency into the ledger from the cell.
+	payload := resultPayload{
+		Glv:          "go",
+		Metric:       *testType,
+		Script:       *script,
+		Concurrency:  nil,
+		Pool:         *poolSize,
+		Parallelism:  *parallelism,
+		Requests:     *requests,
+		Warmups:      *warmups,
+		Executions:   *executions,
+		Measurements: measurements,
+		Errors:       errorsPerExecution,
+	}
+	if data, err := json.Marshal(payload); err == nil {
+		fmt.Println("RESULT_JSON: " + string(data))
+	} else {
+		fmt.Fprintf(os.Stderr, "Error marshaling result payload: %v\n", err)
 	}
 
 	if *noExit {
@@ -144,7 +194,11 @@ func initializeGraph(url string, poolSize int) {
 
 func runThroughputTest(url string, parallelism, warmups, executions, requests int,
 	exercise bool, poolSize, tooSlowThreshold, timeout, minExpectedRps,
-	pauseBetweenRuns int, store string, chooser *scriptChooser) {
+	pauseBetweenRuns int, store string, chooser *scriptChooser) ([]float64, []int) {
+
+	// Raw per-execution req/sec and aligned error counts, TEST CYCLE only.
+	measurements := []float64{}
+	errorsPerExecution := []int{}
 
 	fmt.Println("-----------------------THROUGHPUT TEST SELECTED--------------------")
 
@@ -199,7 +253,7 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		if avgWarmupRps < float64(minExpectedRps) && !exercise {
 			fmt.Printf("avg req/sec during warmup (%.0f) is below minimum expected (%d), skipping test cycles\n",
 				avgWarmupRps, minExpectedRps)
-			return
+			return measurements, errorsPerExecution
 		}
 	}
 
@@ -254,6 +308,8 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 		rps := float64(requests) / elapsed
 		totalRps += rps
 		completedExecs++
+		measurements = append(measurements, math.Round(rps))
+		errorsPerExecution = append(errorsPerExecution, int(atomic.LoadInt64(&errors)))
 
 		if exercise {
 			fmt.Printf("[test-%d]   requests: %d | time(s): %.3f    | req/sec: %d   | too slow: N/A | errors: %d\n",
@@ -275,10 +331,16 @@ func runThroughputTest(url string, parallelism, warmups, executions, requests in
 			writeStore(store, parallelism, poolSize, avgRps)
 		}
 	}
+
+	return measurements, errorsPerExecution
 }
 
 func runLatencyTest(url string, warmups, executions int, exercise bool,
-	poolSize, timeout, pauseBetweenRuns int, chooser *scriptChooser) {
+	poolSize, timeout, pauseBetweenRuns int, chooser *scriptChooser) ([]float64, []int) {
+
+	// Raw per-execution latency (seconds) and aligned error counts, TEST CYCLE only.
+	measurements := []float64{}
+	errorsPerExecution := []int{}
 
 	fmt.Println("-----------------------LATENCY TEST SELECTED----------------------")
 
@@ -311,7 +373,7 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		if elapsed > timeoutSec {
 			fmt.Printf("Warmup latency (%.6f s) exceeds timeout (%.3f s), skipping test cycles\n",
 				elapsed, timeoutSec)
-			return
+			return measurements, errorsPerExecution
 		}
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
 	}
@@ -337,13 +399,22 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		s := chooser.next()
 		rs, err := client.Submit(s)
 		var resultCount int
+		var errCount int
 		if err == nil {
-			results, _ := rs.All()
-			resultCount = len(results)
+			results, allErr := rs.All()
+			if allErr != nil {
+				errCount = 1
+			} else {
+				resultCount = len(results)
+			}
+		} else {
+			errCount = 1
 		}
 		elapsed := time.Since(start).Seconds()
 		totalLatency += elapsed
 		completedExecs++
+		measurements = append(measurements, elapsed)
+		errorsPerExecution = append(errorsPerExecution, errCount)
 
 		fmt.Printf("[test-%d]  time: %.6f, result count: %d\n", i+1, elapsed, resultCount)
 
@@ -355,6 +426,8 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 		avgLatency := totalLatency / float64(completedExecs)
 		fmt.Printf("avg latency (sec/req): %.6f\n", avgLatency)
 	}
+
+	return measurements, errorsPerExecution
 }
 
 func writeStore(storePath string, parallelism, poolSize, rps int) {

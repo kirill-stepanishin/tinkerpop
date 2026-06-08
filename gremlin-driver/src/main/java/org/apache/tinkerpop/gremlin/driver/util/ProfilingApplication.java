@@ -24,12 +24,16 @@ import org.apache.tinkerpop.gremlin.driver.Client;
 import org.apache.tinkerpop.gremlin.driver.Cluster;
 import org.apache.tinkerpop.gremlin.structure.util.ElementHelper;
 import org.apache.tinkerpop.gremlin.util.ser.Serializers;
+import org.apache.tinkerpop.shaded.jackson.databind.ObjectMapper;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Random;
@@ -76,6 +80,9 @@ public class ProfilingApplication {
     private final boolean exercise;
 
     private final boolean suppressStackTraces;
+
+    // per-execution error count, read by the caller after executeThroughput/executeLatency runs
+    private int errors = 0;
 
     private final ExecutorService executor;
 
@@ -131,11 +138,13 @@ public class ProfilingApplication {
                     StringUtils.rightPad(String.valueOf(totalSeconds), 14),
                     StringUtils.rightPad(String.valueOf(reqSec), 7), exercise ? "N/A" : tooSlow.get(),
                     errors.get()));
+            this.errors = errors.get();
             return reqSec;
         } catch (Exception ex) {
             // catch all so that it doesn't tank the whole execution. returning 0 will hose up calculations on
             // averages, but presumably you'd see the failed executions and be suspicious.
             System.out.println("Failed Execution: " + executionName + " - " + ex.getMessage());
+            this.errors = errors.get() + 1;
             return 0;
         } finally {
             client.close();
@@ -143,6 +152,19 @@ public class ProfilingApplication {
     }
 
     public double executeLatency() throws Exception {
+        return executeLatency(false);
+    }
+
+    /**
+     * Runs a single latency execution.
+     *
+     * @param measured when {@code true} this is a measured TEST CYCLE execution: a per-execution request failure is
+     *                 caught, counted in {@link #errors}, and the measured seconds are still returned so the run
+     *                 continues (mirrors the Go app, which records errCount and keeps going). When {@code false}
+     *                 (warmups) a failure is rethrown, preserving the original hard-exit behavior. True setup and
+     *                 connection failures always rethrow regardless of this flag.
+     */
+    public double executeLatency(final boolean measured) throws Exception {
         final Client client = cluster.connect();
         final String executionId = "[" + executionName + "]";
         try {
@@ -150,14 +172,23 @@ public class ProfilingApplication {
 
             final long start = System.nanoTime();
             int size = 0;
-            final Iterator itr = client.submitAsync(script).get().iterator();
             try {
-                while (true) {
-                    itr.next();
-                    size++;
+                final Iterator itr = client.submitAsync(script).get().iterator();
+                try {
+                    while (true) {
+                        itr.next();
+                        size++;
+                    }
+                } catch (NoSuchElementException nsee) {
+                    ; // Expected as hasNext() not called to increase performance.
                 }
-            } catch (NoSuchElementException nsee) {
-                ; // Expected as hasNext() not called to increase performance.
+            } catch (Exception requestEx) {
+                // Per-execution request error. In the measured TEST CYCLE we record it and keep the measured seconds
+                // so the run continues and the single RESULT_JSON line is still emitted (mirrors the Go app). In
+                // warmups we preserve the original behavior and let it propagate to a hard exit.
+                if (!measured) throw requestEx;
+                this.errors = 1;
+                if (!suppressStackTraces) requestEx.printStackTrace();
             }
             final long end = System.nanoTime();
             final long total = (end - start);
@@ -175,6 +206,10 @@ public class ProfilingApplication {
 
     private String chooseScript() {
         return scripts[random.nextInt(scripts.length - 1)];
+    }
+
+    public int getErrors() {
+        return errors;
     }
 
     public enum TestType { LATENCY, THROUGHPUT };
@@ -211,6 +246,11 @@ public class ProfilingApplication {
                 .maxWaitForConnection(maxWaitForConnection)
                 .serializer(Serializers.valueOf(serializer))
                 .workerPoolSize(workerPoolSize).create();
+
+        // Raw per-execution values collected during the TEST CYCLE only (warmups excluded). Echoed verbatim in the
+        // single RESULT_JSON line; no stats here. measurements -> req/sec (throughput) or seconds (latency).
+        final List<Number> measurements = new ArrayList<>();
+        final List<Integer> errorsPerExecution = new ArrayList<>();
 
         try {
             if (TestType.LATENCY == testType) {
@@ -257,7 +297,11 @@ public class ProfilingApplication {
                     final long start = System.nanoTime();
                     System.out.println("----------------------------TEST CYCLE----------------------------");
                     for (int ix = 0; ix < executions && !exceededTimeout.get(); ix++) {
-                        totalRequestsPerSecond += new ProfilingApplication("test-" + (ix + 1), cluster, requests, executor, script, tooSlowThreshold, exercise, suppressStackTraces).executeThroughput();
+                        final ProfilingApplication app = new ProfilingApplication("test-" + (ix + 1), cluster, requests, executor, script, tooSlowThreshold, exercise, suppressStackTraces);
+                        final long reqSec = app.executeThroughput();
+                        measurements.add(reqSec);
+                        errorsPerExecution.add(app.getErrors());
+                        totalRequestsPerSecond += reqSec;
                         exceededTimeout.set((System.nanoTime() - start) > TimeUnit.NANOSECONDS.convert(timeout, TimeUnit.MILLISECONDS));
                         TimeUnit.MILLISECONDS.sleep(pauseBetweenRuns); // pause between executions
                     }
@@ -287,7 +331,11 @@ public class ProfilingApplication {
                     final long start = System.nanoTime();
                     System.out.println("----------------------------TEST CYCLE----------------------------");
                     for (int ix = 0; ix < executions && !exceededTimeout.get(); ix++) {
-                        totalTime += new ProfilingApplication("test-" + (ix + 1), cluster, requests, executor, script, tooSlowThreshold, exercise, suppressStackTraces).executeLatency();
+                        final ProfilingApplication app = new ProfilingApplication("test-" + (ix + 1), cluster, requests, executor, script, tooSlowThreshold, exercise, suppressStackTraces);
+                        final double latency = app.executeLatency(true);
+                        measurements.add(latency);
+                        errorsPerExecution.add(app.getErrors());
+                        totalTime += latency;
                         exceededTimeout.set((System.nanoTime() - start) > TimeUnit.NANOSECONDS.convert(timeout, TimeUnit.MILLISECONDS));
                         TimeUnit.MILLISECONDS.sleep(pauseBetweenRuns); // pause between executions
                     }
@@ -298,6 +346,23 @@ public class ProfilingApplication {
             } else {
                 System.out.println("Encountered unknown testType. Please enter a valid value and try again.");
             }
+
+            // Single machine-readable result line (see bench/SCHEMA.md). Always printed exactly once;
+            // measurements/errors are empty if the test cycle was skipped (warmup gate failed) or cut short
+            // (timeout). Warmups are excluded. No statistics are computed here.
+            final Map<String, Object> resultPayload = new LinkedHashMap<>();
+            resultPayload.put("glv", "java");
+            resultPayload.put("metric", TestType.LATENCY == testType ? "latency" : "throughput");
+            resultPayload.put("script", script);
+            resultPayload.put("concurrency", null);
+            resultPayload.put("pool", maxConnectionPoolSize);
+            resultPayload.put("parallelism", parallelism);
+            resultPayload.put("requests", requests);
+            resultPayload.put("warmups", warmups);
+            resultPayload.put("executions", executions);
+            resultPayload.put("measurements", measurements);
+            resultPayload.put("errors", errorsPerExecution);
+            System.out.println("RESULT_JSON: " + new ObjectMapper().writeValueAsString(resultPayload));
 
             if (!noExit) System.exit(0);
         } catch (Exception ex) {

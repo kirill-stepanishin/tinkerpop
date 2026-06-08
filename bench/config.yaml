@@ -1,0 +1,52 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Benchmark harness configuration for THIS branch only.
+# This file is version-specific and self-contained: it holds the local
+# branch's settings and never references "the other version". On the 4.0
+# branch the transport is HTTP and concurrency is realized as a connection
+# pool of size C.
+
+# Transport used by every GLV on this branch.
+transport: http
+
+# How concurrency maps onto the drivers on this branch.
+#   pool      -> 4.0: one connection per concurrent request (pool size = C)
+#   multiplex -> 3.7: WS multiplexing knobs (not used on this branch)
+concurrency_model: pool
+
+# Default server host. Override per run via --host or env.
+host: localhost
+
+# Default output directory for the append-only ledger and raw logs.
+# "~" is expanded to the user's home directory.
+output_dir: ~/bench-results
+
+# Default execution counts (overridable per run via --warmups/--executions).
+defaults:
+  warmups: 2
+  executions: 3
+
+# GLV launcher paths, relative to the repo root (auto-discovered).
+# The java entry is a glob because the standalone dir is version-stamped;
+# config.py resolves it to a concrete path at load time.
+launchers:
+  java: gremlin-driver/target/apache-tinkerpop-gremlin-driver-*-standalone/bin/profile-driver.sh
+  go: gremlin-go/profiling_application
+  dotnet: gremlin-dotnet/src/main/bin/profile-driver.sh
+  javascript: gremlin-js/gremlin-javascript/src/main/bin/profile-driver.sh
+  python: gremlin-python/src/main/bin/profile-driver.sh

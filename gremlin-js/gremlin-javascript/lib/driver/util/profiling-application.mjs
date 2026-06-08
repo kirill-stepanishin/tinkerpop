@@ -156,7 +156,7 @@ async function initializeGraph(url) {
   }
 }
 
-async function runThroughputTest(args, url) {
+async function runThroughputTest(args, url, measurements, errorsPerExecution) {
   console.log('---------------------THROUGHPUT TEST SELECTED---------------------');
 
   if (args.exercise) {
@@ -252,6 +252,11 @@ async function runThroughputTest(args, url) {
     totalRps += rps;
     completedExecutions++;
 
+    // Raw per-execution values collected in the TEST CYCLE only (warmups
+    // excluded). Echoed verbatim in the single RESULT_JSON line; no stats here.
+    measurements.push(rps);
+    errorsPerExecution.push(errors);
+
     if (args.exercise) {
       console.log(`[test-${e}]   requests: ${args.requests} | time(s): ${elapsed.toFixed(3)}    | req/sec: ${rps}   | too slow: N/A | errors: ${errors}`);
     } else {
@@ -283,7 +288,7 @@ async function streamAndCount(client, script) {
   return count;
 }
 
-async function runLatencyTest(args, url) {
+async function runLatencyTest(args, url, measurements, errorsPerExecution) {
   console.log('-----------------------LATENCY TEST SELECTED----------------------');
 
   const executeQuery = args.stream ? streamAndCount : submitAndCount;
@@ -326,16 +331,36 @@ async function runLatencyTest(args, url) {
     }
 
     const client = new Client(url);
+    let errors = 0;
+    let resultCount = 0;
+    let elapsed = 0;
+    const start = performance.now();
     try {
-      const start = performance.now();
-      const resultCount = await executeQuery(client, args.script);
-      const elapsed = (performance.now() - start) / 1000;
-      totalTime += elapsed;
-      completedExecutions++;
-      console.log(`[test-${e}]  time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
+      resultCount = await executeQuery(client, args.script);
+      elapsed = (performance.now() - start) / 1000;
+    } catch (e) {
+      // A per-execution request error in the MEASURED cycle is caught and
+      // counted for this execution (mirrors the Go app) instead of throwing
+      // out to main and exiting. The execution's measured time is still
+      // recorded and the cycle continues, so the single RESULT_JSON line is
+      // always printed. (Setup/connection failures still hard-exit via main.)
+      elapsed = (performance.now() - start) / 1000;
+      errors++;
     } finally {
       await client.close();
     }
+
+    totalTime += elapsed;
+    completedExecutions++;
+
+    // Raw per-execution values collected in the TEST CYCLE only (warmups
+    // excluded). Echoed verbatim in the single RESULT_JSON line; no stats
+    // here. measurements and errorsPerExecution stay aligned 1:1 (one entry
+    // per execution); a per-execution error records the measured time and a
+    // non-zero error count rather than being dropped.
+    measurements.push(elapsed);
+    errorsPerExecution.push(errors);
+    console.log(`[test-${e}]  time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
 
     if (e < args.executions) await sleep(args.pauseBetweenRuns);
   }
@@ -348,12 +373,36 @@ async function main() {
   const args = parseArgs(process.argv);
   const url = `http://${args.host}:${args.port}/gremlin`;
 
+  // Raw per-execution values collected during the TEST CYCLE only (warmups
+  // excluded). Echoed verbatim in the single RESULT_JSON line; no stats here.
+  const measurements = [];
+  const errorsPerExecution = [];
+
   try {
     if (args.testType === 'latency') {
-      await runLatencyTest(args, url);
+      await runLatencyTest(args, url, measurements, errorsPerExecution);
     } else {
-      await runThroughputTest(args, url);
+      await runThroughputTest(args, url, measurements, errorsPerExecution);
     }
+
+    // Single machine-readable result line (see bench/SCHEMA.md). Always
+    // printed exactly once; measurements/errors are empty if the test cycle
+    // was skipped (warmup gate failed) or cut short (timeout). Warmups are
+    // excluded. No statistics are computed here.
+    const resultPayload = {
+      glv: 'javascript',
+      metric: args.testType,
+      script: args.script,
+      concurrency: null,
+      pool: args.poolSize,
+      parallelism: args.parallelism,
+      requests: args.requests,
+      warmups: args.warmups,
+      executions: args.executions,
+      measurements: measurements,
+      errors: errorsPerExecution,
+    };
+    console.log('RESULT_JSON: ' + JSON.stringify(resultPayload));
   } catch (err) {
     console.error(`Failed Execution: ${err.name} - ${err.message}`);
     if (!args.noExit) process.exit(1);
