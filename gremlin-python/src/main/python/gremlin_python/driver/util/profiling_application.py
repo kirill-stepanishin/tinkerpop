@@ -17,6 +17,7 @@
 # under the License.
 #
 import argparse
+import json
 import os
 import random
 import sys
@@ -69,6 +70,8 @@ class ProfilingApplication:
         self._exercise = exercise
         self._suppress_stack_traces = suppress_stack_traces
         self._random = random.Random(0)
+        # per-execution error count, read by the caller after execute_* runs
+        self.errors = 0
 
     def _create_client(self):
         return Client(self._url, "g",
@@ -112,6 +115,7 @@ class ProfilingApplication:
 
             total_seconds = (end - start) / 1_000_000_000.0
             req_sec = round(self._requests / total_seconds)
+            self.errors = errors[0]
             too_slow_display = "N/A" if self._exercise else str(too_slow[0])
             print("{:<10} requests: {} | time(s): {:<14.3f} | req/sec: {:<7} | too slow: {} | errors: {}".format(
                 execution_id, self._requests, total_seconds,
@@ -119,32 +123,51 @@ class ProfilingApplication:
             return req_sec
         except Exception as ex:
             print("Failed Execution: {} - {}".format(self._execution_name, str(ex)))
+            self.errors = errors[0] + 1
             return 0
         finally:
             client.close()
 
-    def execute_latency(self):
+    def execute_latency(self, record_errors=False):
+        # record_errors=False (warmup default): a request error aborts via
+        # RuntimeError, leaving the warmup-gate behavior unchanged.
+        # record_errors=True (measured TEST CYCLE): mirror the Go app -- count
+        # the error as this execution's error count, still record the measured
+        # seconds, and return normally so the caller continues the loop and the
+        # single RESULT_JSON line is always emitted. Client creation stays
+        # outside the try so a true setup/connection failure remains a hard
+        # exit regardless of this flag.
         execution_id = "[{}]".format(self._execution_name)
         client = self._create_client()
         try:
             start = time.perf_counter_ns()
-            result_set = client.submit(self._script)
-            size = 0
-            for item in result_set:
-                if isinstance(item, list):
-                    size += len(item)
-                else:
-                    size += 1
+            try:
+                result_set = client.submit(self._script)
+                size = 0
+                for item in result_set:
+                    if isinstance(item, list):
+                        size += len(item)
+                    else:
+                        size += 1
+            except Exception as ex:
+                if not record_errors:
+                    if not self._suppress_stack_traces:
+                        traceback.print_exc()
+                    raise RuntimeError(str(ex)) from ex
+                end = time.perf_counter_ns()
+                self.errors = 1
+                total_seconds = (end - start) / 1_000_000_000.0
+                if not self._suppress_stack_traces:
+                    traceback.print_exc()
+                print("{:<10} time: {:<7}, result count: {}".format(
+                    execution_id, "{:.4f}".format(total_seconds), 0), flush=True)
+                return total_seconds
             end = time.perf_counter_ns()
 
             total_seconds = (end - start) / 1_000_000_000.0
             print("{:<10} time: {:<7}, result count: {}".format(
                 execution_id, "{:.4f}".format(total_seconds), size), flush=True)
             return total_seconds
-        except Exception as ex:
-            if not self._suppress_stack_traces:
-                traceback.print_exc()
-            raise RuntimeError(str(ex)) from ex
         finally:
             client.close()
 
@@ -170,6 +193,8 @@ def main():
     parser.add_argument("--executions", type=int, default=10, help="Test iterations")
     parser.add_argument("--requests", type=int, default=10000, help="Requests per test execution")
     parser.add_argument("--pool-size", type=int, default=8, help="Client connection pool size")
+    parser.add_argument("--concurrency", type=int, default=None,
+                        help="Canonical concurrency for the cell (provenance passthrough, echoed in RESULT_JSON)")
     parser.add_argument("--max-workers", type=int, default=None, help="Client ThreadPoolExecutor size")
     parser.add_argument("--too-slow-threshold", type=int, default=125, help="Per-request timeout ms")
     parser.add_argument("--serializer", default="graphbinaryv1",
@@ -186,6 +211,11 @@ def main():
     executor = ThreadPoolExecutor(max_workers=args.parallelism)
     url = "{}://{}:{}/gremlin".format(args.transport, args.host, args.port)
     serializer_instance = _resolve_serializer(args.serializer)
+
+    # Raw per-execution values collected during the TEST CYCLE only (warmups
+    # excluded). Echoed verbatim in the single RESULT_JSON line; no stats here.
+    measurements = []
+    errors_per_execution = []
 
     try:
         if args.test_type == "latency":
@@ -243,7 +273,10 @@ def main():
                         args.requests, executor, args.script,
                         args.too_slow_threshold, args.exercise,
                         args.suppress_stack_traces)
-                    total_requests_per_second += app.execute_throughput()
+                    rps = app.execute_throughput()
+                    measurements.append(rps)
+                    errors_per_execution.append(app.errors)
+                    total_requests_per_second += rps
                     completed_executions += 1
                     elapsed_ns = time.perf_counter_ns() - start
                     exceeded_timeout = elapsed_ns > args.timeout * 1_000_000
@@ -292,7 +325,10 @@ def main():
                         args.requests, executor, args.script,
                         args.too_slow_threshold, args.exercise,
                         args.suppress_stack_traces)
-                    total_time += app.execute_latency()
+                    latency = app.execute_latency(record_errors=True)
+                    measurements.append(latency)
+                    errors_per_execution.append(app.errors)
+                    total_time += latency
                     completed_executions += 1
                     elapsed_ns = time.perf_counter_ns() - start
                     exceeded_timeout = elapsed_ns > args.timeout * 1_000_000
@@ -303,6 +339,25 @@ def main():
             else:
                 avg_latency = total_time / completed_executions
             print("avg latency (sec/req): {}".format(avg_latency))
+
+        # Single machine-readable result line (see bench/SCHEMA.md). Always
+        # printed exactly once; measurements/errors are empty if the test cycle
+        # was skipped (warmup gate failed) or cut short (timeout). Warmups are
+        # excluded. No statistics are computed here.
+        result_payload = {
+            "glv": "python",
+            "metric": args.test_type,
+            "script": args.script,
+            "concurrency": args.concurrency,
+            "pool": args.pool_size,
+            "parallelism": args.parallelism,
+            "requests": args.requests,
+            "warmups": args.warmups,
+            "executions": args.executions,
+            "measurements": measurements,
+            "errors": errors_per_execution,
+        }
+        print("RESULT_JSON: " + json.dumps(result_payload), flush=True)
 
         if not args.no_exit:
             sys.exit(0)

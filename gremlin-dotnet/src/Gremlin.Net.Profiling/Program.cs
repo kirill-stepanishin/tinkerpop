@@ -14,8 +14,10 @@
 // limitations under the License.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Gremlin.Net.Driver;
@@ -28,18 +30,46 @@ if (config.Parallelism <= 0)
     Environment.Exit(1);
 }
 
+// Raw per-execution values collected during the TEST CYCLE only (warmups
+// excluded). Echoed verbatim in the single RESULT_JSON line; no stats here.
+List<object> measurements;
+List<long> errorsPerExecution;
+
 if (config.TestType == TestType.Latency)
-    await RunLatencyTest(config);
+    (measurements, errorsPerExecution) = await RunLatencyTest(config);
 else
-    await RunThroughputTest(config);
+    (measurements, errorsPerExecution) = await RunThroughputTest(config);
+
+// Single machine-readable result line (see bench/SCHEMA.md). Always printed
+// exactly once; measurements/errors are empty if the test cycle was skipped
+// (warmup gate failed) or cut short (timeout). Warmups are excluded. No
+// statistics are computed here.
+var resultPayload = new Dictionary<string, object?>
+{
+    ["glv"] = "dotnet",
+    ["metric"] = config.TestType == TestType.Latency ? "latency" : "throughput",
+    ["script"] = config.Script,
+    ["concurrency"] = null,
+    ["pool"] = config.PoolSize,
+    ["parallelism"] = config.Parallelism,
+    ["requests"] = config.Requests,
+    ["warmups"] = config.Warmups,
+    ["executions"] = config.Executions,
+    ["measurements"] = measurements,
+    ["errors"] = errorsPerExecution,
+};
+Console.WriteLine("RESULT_JSON: " + JsonSerializer.Serialize(resultPayload));
 
 if (!config.NoExit)
     Environment.Exit(0);
 
 // ------- Latency Test -------
 
-async Task RunLatencyTest(Config cfg)
+async Task<(List<object> Measurements, List<long> Errors)> RunLatencyTest(Config cfg)
 {
+    var measurements = new List<object>();
+    var errors = new List<long>();
+
     Console.WriteLine("-----------------------LATENCY TEST SELECTED----------------------");
 
     var server = new GremlinServer(cfg.Host, cfg.Port);
@@ -62,7 +92,7 @@ async Task RunLatencyTest(Config cfg)
         {
             Console.WriteLine("Timeout exceeded during warmup. Skipping test cycles.");
             Console.WriteLine("avg latency (sec/req): 0");
-            return;
+            return (measurements, errors);
         }
 
         await Task.Delay(cfg.PauseBetweenRuns);
@@ -75,10 +105,12 @@ async Task RunLatencyTest(Config cfg)
 
     for (int e = 1; e <= cfg.Executions; e++)
     {
-        var (elapsed, count) = await RunSingleLatencyIteration(client, cfg);
+        var (elapsed, count, errCount) = await RunMeasuredLatencyIteration(client, cfg);
         var id = $"[test-{e}]";
         Console.WriteLine($"{id,-10}time: {elapsed}, result count: {count}");
 
+        measurements.Add(elapsed);
+        errors.Add(errCount);
         totalLatency += elapsed;
         completed++;
 
@@ -94,6 +126,8 @@ async Task RunLatencyTest(Config cfg)
     }
 
     Console.WriteLine($"avg latency (sec/req): {(completed > 0 ? totalLatency / completed : 0)}");
+
+    return (measurements, errors);
 }
 
 async Task<(double ElapsedSeconds, int ResultCount)> RunSingleLatencyIteration(GremlinClient client, Config cfg)
@@ -106,10 +140,36 @@ async Task<(double ElapsedSeconds, int ResultCount)> RunSingleLatencyIteration(G
     return (sw.Elapsed.TotalSeconds, count);
 }
 
+// Measured TEST CYCLE iteration. Unlike the warmup path, a per-execution
+// request error is caught and reported as that execution's error count
+// (0 or 1) rather than bubbling up as an unhandled exception. The measured
+// elapsed seconds are still recorded so measurements/errors stay 1:1.
+async Task<(double ElapsedSeconds, int ResultCount, long Errors)> RunMeasuredLatencyIteration(GremlinClient client, Config cfg)
+{
+    var sw = Stopwatch.StartNew();
+    int count = 0;
+    long errCount = 0;
+    try
+    {
+        var results = await client.SubmitAsync<dynamic>(cfg.Script);
+        count = results.Count;
+    }
+    catch
+    {
+        errCount = 1;
+    }
+    sw.Stop();
+
+    return (sw.Elapsed.TotalSeconds, count, errCount);
+}
+
 // ------- Throughput Test -------
 
-async Task RunThroughputTest(Config cfg)
+async Task<(List<object> Measurements, List<long> Errors)> RunThroughputTest(Config cfg)
 {
+    var measurements = new List<object>();
+    var errorsPerExecution = new List<long>();
+
     Console.WriteLine("---------------------THROUGHPUT TEST SELECTED---------------------");
 
     if (cfg.Exercise)
@@ -134,7 +194,7 @@ async Task RunThroughputTest(Config cfg)
     for (int w = 1; w <= cfg.Warmups && meetsRpsExpectation; w++)
     {
         var (elapsed, tooSlow, errors) = await RunThroughputIteration(client, cfg, 1000, random);
-        long rps = elapsed > 0 ? (long)(1000 / elapsed) : 0;
+        long rps = elapsed > 0 ? (long)Math.Round(1000 / elapsed) : 0;
 
         var id = $"[warmup-{w}]";
         var tooSlowStr = cfg.Exercise ? "N/A" : tooSlow.ToString();
@@ -150,7 +210,7 @@ async Task RunThroughputTest(Config cfg)
     {
         Console.WriteLine($"Warmup avg RPS below minExpectedRps ({cfg.MinExpectedRps}). Skipping test cycles.");
         Console.WriteLine("avg req/sec: 0");
-        return;
+        return (measurements, errorsPerExecution);
     }
 
     Console.WriteLine("----------------------------TEST CYCLE----------------------------");
@@ -161,12 +221,14 @@ async Task RunThroughputTest(Config cfg)
     for (int e = 1; e <= cfg.Executions; e++)
     {
         var (elapsed, tooSlow, errors) = await RunThroughputIteration(client, cfg, cfg.Requests, random);
-        long rps = elapsed > 0 ? (long)(cfg.Requests / elapsed) : 0;
+        long rps = elapsed > 0 ? (long)Math.Round(cfg.Requests / elapsed) : 0;
 
         var id = $"[test-{e}]";
         var tooSlowStr = cfg.Exercise ? "N/A" : tooSlow.ToString();
         Console.WriteLine($"{id,-11}requests: {cfg.Requests} | time(s): {elapsed,-14:F9} | req/sec: {rps,-7} | too slow: {tooSlowStr} | errors: {errors}");
 
+        measurements.Add(rps);
+        errorsPerExecution.Add(errors);
         totalRps += rps;
         completed++;
 
@@ -191,6 +253,8 @@ async Task RunThroughputTest(Config cfg)
             await File.WriteAllTextAsync(cfg.Store, "parallelism\tpoolSize\tmaxInProcessPerConnection\trequestPerSecond\n");
         await File.AppendAllTextAsync(cfg.Store, $"{cfg.Parallelism}\t{cfg.PoolSize}\t{cfg.MaxInProcessPerConnection}\t{avgRps}\n");
     }
+
+    return (measurements, errorsPerExecution);
 }
 
 async Task<(double ElapsedSeconds, long TooSlow, long Errors)> RunThroughputIteration(
