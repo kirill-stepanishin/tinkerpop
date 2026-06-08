@@ -1,0 +1,4 @@
+# Compiled profiling-application binaries (built from ./driver/util).
+# Anchored so they never match the gremlin-go/driver/util source directory.
+/profiling_application
+/util
