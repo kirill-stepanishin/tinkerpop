@@ -70,7 +70,7 @@ export const meta = {
 // ---- knobs (override via `args`; see RUNBOOK) ---------------------------------
 const REPO       = (args && args.repo)   || '/Users/kiristep/dev/tinkerpop'
 const OUT        = (args && args.out)    || '/Users/kiristep/glv-auto-results'
-const BASE       = (args && args.base)   || '4-glv-profiling'      // candidates fork from here; also the baseline arm source
+const BASE       = (args && args.base)   || '4-glv-python-perf'    // candidates fork from here; also the baseline arm source
 const HOST       = (args && args.host)   || 'localhost'
 const VENV_PY    = (args && args.python) || '/Users/kiristep/venv-glv-4/bin/python'
 const SERVER_STANDALONE = (args && args.serverDir) ||

@@ -92,7 +92,7 @@ It runs in the background and notifies you on completion; the final message is t
 
 | arg | default | meaning |
 |---|---|---|
-| `base` | `4-glv-profiling` | branch candidates fork from; also the baseline-arm source |
+| `base` | `4-glv-python-perf` | branch candidates fork from; also the baseline-arm source |
 | `out` | `~/glv-auto-results` | results root |
 | `serverDir` | the 4.0 standalone | where Phase 0 starts the server from, if needed |
 | `python` | `~/venv-glv-4/bin/python` | interpreter (Phase 0 may repair/confirm and propagate it) |
@@ -173,8 +173,8 @@ grep -E "DataType|to_object|read_object|from_bytes" cand-$id/cand/*yappi-medium-
 Inspect a branch before merging:
 
 ```bash
-git -C /Users/kiristep/dev/tinkerpop diff 4-glv-profiling..auto/cand-<id> -- gremlin-python
-git -C /Users/kiristep/dev/tinkerpop log --oneline 4-glv-profiling..auto/cand-<id>   # should be ONE clean commit
+git -C /Users/kiristep/dev/tinkerpop diff 4-glv-python-perf..auto/cand-<id> -- gremlin-python
+git -C /Users/kiristep/dev/tinkerpop log --oneline 4-glv-python-perf..auto/cand-<id>   # should be ONE clean commit
 ```
 
 ---
@@ -188,7 +188,7 @@ same file. The workflow stops here — you merge.
 
 ```bash
 cd /Users/kiristep/dev/tinkerpop
-git checkout 4-glv-profiling
+git checkout 4-glv-python-perf
 git merge --no-ff auto/cand-<id>          # one at a time
 # re-run a quick baseline bench on the merged branch to record the realized gain (see §7)
 ```
@@ -256,7 +256,7 @@ docker compose -f gremlin-python/docker-compose.yml down   # if a stack lingers
 
 ## 8. Safety properties (by construction)
 
-- **Never** pushes, opens a PR, or touches `master`/`4-glv-profiling` — only creates `auto/cand-*` branches.
+- **Never** pushes, opens a PR, or touches `master`/`4-glv-python-perf` — only creates `auto/cand-*` branches.
 - **Tests are never modified to pass** — the repair loop fixes only the candidate's own code, and any
   repaired diff re-enters Review; Review auto-rejects a touched test.
 - **Setup applies only light fixes** (venv install, start the modern server) and **aborts** rather than
@@ -284,5 +284,5 @@ cd .. && git status --short        # commit WIP first
 cd ~/glv-auto-results && for d in cand-*; do echo "== $d =="; sed -n '1,30p' "$d/REPORT.md"; done
 
 # 4. merge — SEPARATELY, one branch each, by bucket (clean → breaksContract → cext-after-external-bench)
-git checkout 4-glv-profiling && git merge --no-ff auto/cand-<id>
+git checkout 4-glv-python-perf && git merge --no-ff auto/cand-<id>
 ```
