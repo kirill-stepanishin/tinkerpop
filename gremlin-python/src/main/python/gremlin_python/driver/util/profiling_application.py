@@ -186,6 +186,9 @@ def main():
     parser.add_argument("--no-exit", action="store_true", help="Don't call sys.exit()")
     args = parser.parse_args()
 
+    _PROF = os.environ.get("GREMLIN_PROFILE")
+    _PROF_OUT = os.environ.get("GREMLIN_PROFILE_OUT", "/tmp/glv-yappi")
+
     executor = ThreadPoolExecutor(max_workers=args.parallelism)
     url = "http://{}:{}/gremlin".format(args.host, args.port)
 
@@ -292,6 +295,11 @@ def main():
             if args.exercise or meets_timeout_expectation:
                 start = time.perf_counter_ns()
                 print("----------------------------TEST CYCLE----------------------------")
+                if _PROF in ("yappi-wall", "yappi-cpu"):
+                    import yappi
+                    yappi.set_clock_type("cpu" if _PROF == "yappi-cpu" else "wall")
+                    yappi.clear_stats()
+                    yappi.start()
                 for ix in range(args.executions):
                     if exceeded_timeout:
                         break
@@ -308,6 +316,16 @@ def main():
                     elapsed_ns = time.perf_counter_ns() - start
                     exceeded_timeout = elapsed_ns > args.timeout * 1_000_000
                     time.sleep(args.pause_between_runs / 1000.0)
+
+                if _PROF in ("yappi-wall", "yappi-cpu"):
+                    import yappi
+                    yappi.stop()
+                    fs = yappi.get_func_stats()
+                    fs.save("{}-{}.callgrind".format(_PROF_OUT, _PROF), type="callgrind")
+                    with open("{}-{}.txt".format(_PROF_OUT, _PROF), "w") as fh:
+                        fs.sort("tsub", "desc").print_all(out=fh, columns={0: ("name", 80), 1: ("ncall", 12), 2: ("tsub", 10), 3: ("ttot", 10), 4: ("tavg", 10)})
+                        fh.write("\n==== THREAD STATS ====\n")
+                        yappi.get_thread_stats().print_all(out=fh)
 
             if not meets_timeout_expectation or exceeded_timeout or completed_executions == 0:
                 avg_latency = 0.0
