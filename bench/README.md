@@ -25,10 +25,10 @@ drives the five Gremlin Language Variant (GLV) profiling applications — `java`
 records one wide row per measured cell to an append-only ledger.
 
 This harness **replaces** the legacy shell pipeline (`common.sh` +
-`cat*.sh` + `run-all.sh` + `export-results.py`). The old scripts are still
-present in this directory as a reference fallback and are **not** removed by
-this change; their retirement is a later step, gated on the new harness being
-proven end to end.
+`cat*.sh` + `run-all.sh` + `export-results.py`). Those scripts have been
+**deleted** from this directory — the harness is now the only entry point, so
+there is no shell fallback to drop back to. Only `WALKTHROUGH.md` is retained,
+as a legacy manual reference for the original two-EC2 procedure.
 
 ## What "run-only, per-branch, version-ignorant" means
 
@@ -71,32 +71,66 @@ Instead, each GLV realizes `C` in-flight requests over WebSockets differently
 
 ## Installation
 
-The harness is a small Python package (`tinkerpop-bench`) with a single
-dependency (`PyYAML`). Install it in editable mode to get the `bench` command:
+The harness is a small Python package (`tinkerpop-bench`) whose only dependency
+is `PyYAML`. The fastest path needs **no install** — make `PyYAML` importable
+and invoke the package directly from the `bench/` directory:
+
+```bash
+pip install --user pyyaml
+python3 -m orchestrator run [selectors...] [overrides...]
+```
+
+To get the shorter `bench` entry point on your `PATH`, install the package in
+editable mode instead:
 
 ```bash
 cd bench
 pip install -e .
 ```
 
-You can also invoke it without installing via `python -m orchestrator` from the
-`bench/` directory. All examples below use the `bench` entry point.
+Editable installs need **pip >= 21.3** (older pip cannot build the PEP 660
+editable wheel); if `pip install -e .` fails, upgrade pip or just stay on
+`python3 -m orchestrator run`. The two are equivalent — all examples below use
+the shorter `bench run` form.
 
 ---
 
 ## Per-GLV build prerequisites
 
-The harness does not build the GLVs — build them once before running. These
-commands are migrated from the legacy `WALKTHROUGH.md` and are run from the
-**3.7 repo root** (e.g. `~/tinkerpop-3.7`).
+The harness does not build anything — build the GLVs once before running.
+Everything is produced by **Maven** from the **3.7 repo root** (e.g.
+`~/tinkerpop-3.7`). The simplest approach is a single full build:
 
-| GLV        | Build command                                                                                  |
-|------------|------------------------------------------------------------------------------------------------|
-| java       | `mvn clean install -pl gremlin-driver -am -DskipTests -Dasciidoc.skip=true`                     |
-| go         | `cd gremlin-go && go build -o profiling_application ./driver/util/`                             |
-| dotnet     | `cd gremlin-dotnet/src/Gremlin.Net.Profiling && dotnet build -c Release`                        |
-| javascript | `cd gremlin-javascript/src/main/javascript/gremlin-javascript && npm install`                   |
-| python     | `cd gremlin-python/src/main/python && pip install -e .`                                          |
+```bash
+mvn clean install -DskipTests
+```
+
+If you only need to (re)build one GLV, use the selective per-module recipes
+(`-pl <module>`, plus the `-Pglv-*` profile that drives each GLV's native
+build). These are run from the **3.7 repo root**:
+
+| GLV        | Selective Maven build                                                       |
+|------------|-----------------------------------------------------------------------------|
+| java       | `mvn clean install -pl gremlin-driver -am -DskipTests -Dasciidoc.skip=true`  |
+| python     | `mvn clean install -pl gremlin-python -am -Pglv-python -DskipTests`          |
+| go         | `mvn clean install -pl gremlin-go -am -Pglv-go -DskipTests`                  |
+| javascript | `mvn clean install -pl gremlin-javascript -am -Pglv-js -DskipTests`          |
+| dotnet     | no `-Pglv-*` profile — the .NET launcher self-builds (see below)            |
+
+> **Launcher specifics (not produced by Maven).** A few launchers need a step
+> the Maven build does not perform on its own:
+> - **go** — the `profiling_application` binary is built directly with the Go
+>   toolchain: `cd gremlin-go && go build -o profiling_application ./driver/util/`.
+> - **dotnet** — the launcher **self-builds** on first invocation via
+>   `dotnet run -c Release`; it needs the **.NET 8** runtime, or set
+>   `DOTNET_ROLL_FORWARD=LatestMajor` to run it on a newer SDK.
+> - **python** — the launcher needs a **>= 3.10** interpreter with the
+>   `gremlinpython` deps installed; if your default `python3` is older, point
+>   the wrapper at a newer one via the `PYTHON` env var. On **3.7** the adapter
+>   also appends `--transport ws` to the python launcher (driven by
+>   `config.yaml`'s `transport: ws`).
+> - **javascript** — needs `node_modules` present, which the `-Pglv-js` Maven
+>   build installs.
 
 Make the per-GLV launcher wrappers executable (one-time):
 
@@ -296,9 +330,57 @@ When in doubt, trust `control` rows from a real `host` on a clean `git_sha`.
 
 ---
 
+## Running the control on EC2
+
+Once a localhost `smoke` run is green, the real `control` numbers come from the
+two-EC2 setup above. The server and client configuration below is 3.7-specific.
+
+### Server EC2
+
+The 3.7 server ships a Modern-graph config at `conf/gremlin-server-modern.yaml`.
+On 3.7 this conf **preloads the Modern graph at startup** via the
+`generate-modern.groovy` init script (wired in through `ScriptFileGremlinPlugin`),
+so there is **no** `exercise` step and **no** manual graph load to perform — the
+data is present the moment the server is up.
+
+Unlike the 4.0 modern conf, however, the 3.7 one is **not pre-tuned** for remote
+benchmarking — edit it **before** starting the server:
+
+- set `host: 0.0.0.0` so the server is reachable off-box; and
+- bump `evaluationTimeout` to a large value (e.g. `30000000`) so long
+  scaling-curve cells are not killed mid-run.
+
+```bash
+# in conf/gremlin-server-modern.yaml: host: 0.0.0.0  and  evaluationTimeout: 30000000
+export GREMLIN_YAML=conf/gremlin-server-modern.yaml
+bin/gremlin-server.sh start
+```
+
+The instance's security group must **allow inbound TCP 8182** from the client.
+
+### Client EC2
+
+```bash
+export DOTNET_ROLL_FORWARD=LatestMajor
+python3 -m orchestrator run --label control --host <server-ip> \
+                            --output-dir ~/bench-results
+```
+
+`DOTNET_ROLL_FORWARD=LatestMajor` lets the self-building .NET launcher run on a
+newer SDK than .NET 8. The 3.7 `config.yaml` drives `transport: ws` and
+`concurrency_model: multiplex`, so scaling-curve concurrency `C` is realized
+over WebSockets via `pool × maxInProcessPerConnection`
+([see above](#37-concurrency-model-ws-multiplexing)) rather than a connection
+pool of size `C`. Tag the run `--label control` so its rows are never confused
+with localhost `smoke` rows in the shared ledger.
+
+---
+
 ## See also
 
 - `SCHEMA.md` — the `RESULT_JSON:` stdout contract every GLV app must satisfy.
 - `config.yaml` — branch settings (transport `ws`, `concurrency_model: multiplex`, host, launchers).
 - `matrix.yaml` — the four tests encoded as data.
-- `WALKTHROUGH.md` — legacy bash procedure (reference fallback; being retired).
+- `WALKTHROUGH.md` — legacy manual procedure, retained for reference (the
+  `common.sh`/`cat*.sh`/`run-all.sh`/`export-results.py` scripts it describes
+  have been deleted).
