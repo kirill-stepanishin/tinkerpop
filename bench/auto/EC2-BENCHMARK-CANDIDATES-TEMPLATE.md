@@ -56,7 +56,16 @@ HOT_FILE_GREP='graphbinaryV4|to_object|read_object|is_null|DataType'   # python 
 
 # ---- infra (Setup B provisioned pair; see §1) ----
 HOST=16.59.222.63                            # server IP (Setup B) or "localhost" (Setup A)
+
+# ---- where results land — NAMESPACED BY GLV so a Go run can never collide with a Python run ----
+RESULTS=~/cand-results/$GLV                   # e.g. ~/cand-results/python, ~/cand-results/go
 ```
+
+> **Result isolation.** Every arm writes to `$RESULTS/<branch-tag>/ledger.csv` — a per-GLV,
+> per-branch directory entirely separate from the harness default `~/bench-results` and from other
+> GLVs' candidate runs. The ledger is append-only (re-runs never overwrite), and every row carries
+> `label` (`candidate-eval`), `host`, and `git_sha` provenance, so candidate data never interferes
+> with regular `smoke`/`control` benchmarking results even if directories were ever shared.
 
 > **The one rule that makes this template work:** baseline goes first, each candidate is a single
 > commit on top of the baseline branch, the **server is identical for every arm**, and **only the
@@ -195,8 +204,8 @@ Leave it running in its own `tmux`/`screen` pane for the whole session.
 cd "$REPO/bench"
 bench run --glv "$GLV" --test protocol-overhead --size tiny \
   --host "$HOST" --label candidate-eval --executions 1 --warmups 1 \
-  --output-dir ~/cand-results/_connectivity
-cat ~/cand-results/_connectivity/ledger.csv
+  --output-dir "$RESULTS/_connectivity"
+cat "$RESULTS/_connectivity/ledger.csv"
 ```
 A row with `status=ok`, a non-empty `median`, and **result count 6** (Modern graph loaded) means
 you're ready. Connection refused → server down (A) or SG / `host: 0.0.0.0` (B). `count != 6` →
@@ -213,7 +222,7 @@ per arm. Do **3 full sweeps** for medians-of-medians. Each arm writes to its own
 
 ```bash
 cd "$REPO/bench"
-mkdir -p ~/cand-results
+mkdir -p "$RESULTS"
 BRANCHES=( "$BASELINE" "${CANDIDATE_BRANCHES[@]}" )   # baseline MUST be first
 ```
 
@@ -223,7 +232,7 @@ BRANCHES=( "$BASELINE" "${CANDIDATE_BRANCHES[@]}" )   # baseline MUST be first
 run_arm () {
   local branch="$1" sweep="$2"
   local tag="${branch##*/}"
-  local out=~/cand-results/$tag
+  local out="$RESULTS/$tag"
   mkdir -p "$out"
 
   echo "===== sweep $sweep :: $branch ====="
@@ -266,7 +275,7 @@ for sweep in 1 2 3; do
   for b in "${BRANCHES[@]}"; do
     run_arm "$b" "$sweep"
   done
-done 2>&1 | tee ~/cand-results/sweep-run.log
+done 2>&1 | tee "$RESULTS/sweep-run.log"
 git -C "$REPO" checkout "$BASELINE"      # leave the tree on baseline when done
 ```
 **Never run two arms at once** — concurrent client CPU contention corrupts the comparison.
@@ -278,7 +287,7 @@ git -C "$REPO" checkout "$BASELINE"      # leave the tree on baseline when done
 ### 6a. Wall-clock (quick read; use the UNPROFILED signal)
 
 ```bash
-for d in ~/cand-results/*/; do
+for d in "$RESULTS"/*/; do
   [ -f "$d/ledger.csv" ] || continue
   echo "== $(basename "$d") =="
   awk -F, 'NR==1{for(i=1;i<=NF;i++)h[$i]=i; next}
@@ -297,8 +306,8 @@ the **gate is the same: total self-time drop ≥ 5% = a real win.** Python/yappi
 
 ```bash
 sum_tsub () { awk 'NR>2 && $3 ~ /^[0-9.]+$/ { s+=$3 } END { printf "%.3f\n", s }' "$1"; }
-base=$(sum_tsub ~/cand-results/${BASELINE##*/}/medium-s1-*cpu.txt)
-for d in ~/cand-results/cand-*; do
+base=$(sum_tsub "$RESULTS/${BASELINE##*/}"/medium-s1-*cpu.txt)
+for d in "$RESULTS"/cand-*; do
   c=$(sum_tsub "$d"/medium-s1-*cpu.txt)
   awk -v b="$base" -v c="$c" -v n="$(basename "$d")" 'BEGIN{printf "%-34s total=%ss drop=%.1f%%\n",n,c,(b-c)/b*100}'
 done
@@ -307,7 +316,7 @@ done
 
 Confirm the drop lands in the **targeted hot spot**, not noise elsewhere:
 ```bash
-grep -E "$HOT_FILE_GREP" ~/cand-results/<some-candidate>/medium-s1-*cpu.txt | head
+grep -E "$HOT_FILE_GREP" "$RESULTS"/<some-candidate>/medium-s1-*cpu.txt | head
 ```
 A win should reproduce across all 3 sweeps, not just one.
 
@@ -344,7 +353,7 @@ Server: 16.59.222.63 (m7a.8xlarge, US-EAST-2)  Client: m7a.4xlarge, US-WEST-2
 
 ```bash
 bench run --glv "$GLV" --test scaling-curve --host "$HOST" --label candidate-eval \
-  --concurrency 64 --concurrency 128 --output-dir ~/cand-results/<tag>
+  --concurrency 64 --concurrency 128 --output-dir "$RESULTS/<tag>"
 ```
 A client-side micro-opt rarely moves throughput much (and some GLVs are GIL-/contention-bound);
 **latency + CPU profile are the signals that matter here.**
