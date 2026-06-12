@@ -143,11 +143,146 @@ class GraphBinaryWriter(object):
             return obj
 
 
+_NULL_VALUE = DataType.null.value
+
+
+def _flat_decoder(io_cls):
+    """Build a flat ``fn(buff, reader, nullable)`` decoder for a deserializer class.
+
+    The returned closure inlines its own null/flag read plus value decode so the
+    hot decode path avoids the ``is_null`` frame, the per-call ``else_opt`` lambda,
+    and the ``DataType(bt)`` enum lookup. Flag/nullable semantics are preserved
+    exactly per type:
+
+    * "is_null" types read 1 flag byte when ``nullable`` and return ``None`` on
+      ``0x01``, otherwise decode the value.
+    * List/Map/Set own their flag byte (``0x02`` => ordered/bulk) and so delegate
+      to the existing ``objectify`` which threads the flag through.
+    * Any class we don't recognize (e.g. a user-registered custom deserializer
+      from ``deserializer_map``) falls back to calling its ``objectify`` so its
+      contract is honored verbatim.
+    """
+    gb_type = getattr(io_cls, 'graphbinary_type', None)
+    bt = gb_type.value if gb_type is not None else None
+
+    # Integer unpackers reuse int.from_bytes per known-good benchmark C1;
+    # float/double stay on struct.
+    if bt == 0x01:  # int
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return int.from_bytes(buff.read(4), byteorder='big', signed=True)
+        return dec
+    if bt == 0x02:  # long
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return int.from_bytes(buff.read(8), byteorder='big', signed=True)
+        return dec
+    if bt == 0x26:  # short
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return int.from_bytes(buff.read(2), byteorder='big', signed=True)
+        return dec
+    if bt == 0x24:  # byte
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return int.__new__(SingleByte, int.from_bytes(buff.read(1), byteorder='big', signed=True))
+        return dec
+    if bt == 0x27:  # boolean
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return buff.read(1)[0] == 0x01
+        return dec
+    if bt == 0x07:  # double
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return double_unpack(buff.read(8))
+        return dec
+    if bt == 0x08:  # float
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return float_unpack(buff.read(4))
+        return dec
+    if bt == 0x03:  # string
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return buff.read(int.from_bytes(buff.read(4), byteorder='big', signed=True)).decode("utf-8")
+        return dec
+    if bt == 0x0c:  # uuid
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return uuid.UUID(bytes=buff.read(16))
+        return dec
+    if bt == 0x25:  # binary
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            size = int.from_bytes(buff.read(4), byteorder='big', signed=True)
+            return bytes(buff.read(size))
+        return dec
+    if bt == 0x23:  # biginteger
+        read_bigint = io_cls.read_bigint
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return read_bigint(buff)
+        return dec
+    if bt == 0x22:  # bigdecimal
+        _read = io_cls._read
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return _read(buff)
+        return dec
+    if bt == 0x81:  # duration
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            seconds = reader.to_object(buff, DataType.long, False)
+            nanos = reader.to_object(buff, DataType.int, False)
+            return timedelta(seconds=seconds, microseconds=nanos / 1000)
+        return dec
+    if bt == 0xfd:  # marker
+        def dec(buff, reader, nullable):
+            if nullable and buff.read(1)[0] == 0x01:
+                return None
+            return Marker.of(int8_unpack(buff.read(1)))
+        return dec
+
+    # List/Map/Set own their flag byte; the _EnumIO / graph / edge / path /
+    # vertex / property families and any custom deserializer keep their exact
+    # objectify semantics by delegating. These still skip the per-call lambda
+    # via is_null but, more importantly, skip the DataType(bt) enum hash because
+    # dispatch is already int-keyed here.
+    objectify = io_cls.objectify
+
+    def dec(buff, reader, nullable):
+        return objectify(buff, reader, nullable)
+    return dec
+
+
 class GraphBinaryReader(object):
     def __init__(self, deserializer_map=None):
         self.deserializers = _deserializers.copy()
         if deserializer_map:
             self.deserializers.update(deserializer_map)
+
+        # Build a private int-keyed flat dispatch table once. Keyed by
+        # DataType.value (derived from the post-merge enum-keyed map, so any
+        # deserializer_map override above is honored). Each entry is a flat
+        # closure fn(buff, reader, nullable) that inlines its null/flag read +
+        # value decode -- no is_null frame, no per-call lambda, no DataType(bt).
+        self._dec = {}
+        for gb_type, io_cls in self.deserializers.items():
+            self._dec[gb_type.value] = _flat_decoder(io_cls)
 
     def read_object(self, b):
         if b is None:
@@ -158,14 +293,20 @@ class GraphBinaryReader(object):
 
     def to_object(self, buff, data_type=None, nullable=True):
         if data_type is None:
-            bt = uint8_unpack(buff.read(1))
-            if bt == DataType.null.value:
+            bt = buff.read(1)[0]
+            if bt == _NULL_VALUE:
                 if nullable:
                     buff.read(1)
                 return None
-            return self.deserializers[DataType(bt)].objectify(buff, self, nullable)
+            fn = self._dec.get(bt)
+            if fn is None:
+                raise ValueError("unknown graphbinary type: " + hex(bt))
+            return fn(buff, self, nullable)
         else:
-            return self.deserializers[data_type].objectify(buff, self, nullable)
+            fn = self._dec.get(data_type.value)
+            if fn is None:
+                raise ValueError("unknown graphbinary type: " + str(data_type))
+            return fn(buff, self, nullable)
 
 
 class _GraphBinaryTypeIO(object, metaclass=GraphBinaryTypeType):
