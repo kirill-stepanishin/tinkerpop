@@ -158,7 +158,7 @@ class GraphBinaryReader(object):
 
     def to_object(self, buff, data_type=None, nullable=True):
         if data_type is None:
-            bt = uint8_unpack(buff.read(1))
+            bt = buff.read(1)[0]
             if bt == DataType.null.value:
                 if nullable:
                     buff.read(1)
@@ -881,7 +881,7 @@ class BooleanIO(_GraphBinaryTypeIO):
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
         return cls.is_null(buff, reader,
-                           lambda b, r: True if int8_unpack(b.read(1)) == 0x01 else False,
+                           lambda b, r: b.read(1)[0] == 0x01,
                            nullable)
 
 
