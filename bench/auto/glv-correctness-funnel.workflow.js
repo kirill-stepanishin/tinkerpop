@@ -78,10 +78,16 @@ INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     label: 'gremlin-go',
     module: 'gremlin-go',
     sourceSubdir: 'gremlin-go',
-    // Go worktrees carry their own go.mod, so `go test ./...` from the worktree is naturally
-    // isolated — no env trick needed.
-    unitTest: () => `cd <worktree>/gremlin-go && go vet ./... && go test ./driver/... -count=1`,
-    unitToolDesc: 'go test (no server)',
+    // Go worktrees carry their own go.mod, so building/testing from the worktree is naturally
+    // isolated — no env trick needed. IMPORTANT: `go test ./driver/...` would sweep in
+    // server-dependent tests in connection_test.go (e.g. TestStreamingResultDelivery) that hit
+    // localhost:45940 and are NOT gated by RUN_INTEGRATION_TESTS — they FAIL with no server up.
+    // So the cheap unit gate targets only the verified server-free hot-path suites (GraphBinary
+    // de/serialization, Result, graph types, GValue), plus a full `go build ./...` to catch any
+    // compile break beyond those files. Full streaming/integration coverage runs in the mvn gate.
+    unitTest: () => `cd <worktree>/gremlin-go && go build ./... && ` +
+      `go test ./driver/ -run 'TestGraphBinary|TestSerializer|TestResult|TestGraph|TestGValue' -count=1`,
+    unitToolDesc: 'go build + go test (server-free hot-path suites)',
     sourceGlobs: 'gremlin-go/driver/ (GraphBinary reader/serializer, type deserialization, connection/result streaming)',
     testGlobs: 'gremlin-go/driver/*_test.go (GraphBinary + serializer unit tests)',
     seed:
@@ -125,7 +131,7 @@ export const meta = {
 
 // ---- knobs --------------------------------------------------------------------
 const REPO       = (args && args.repo)   || '/Users/kiristep/dev/tinkerpop'
-const BASE       = (args && args.base)   || '4-glv-python-perf'   // branch candidates fork from
+const BASE       = (args && args.base)   || '4-glv-profiling'   // branch candidates fork from
 const VENV_PY    = (args && args.python) || '/Users/kiristep/venv-glv-4/bin/python'  // python lane only
 const ALLOW_HIGH_CEILING = (args && args.allowHighCeiling) !== false  // default ON
 const MAX_RESEARCH_CANDS = (args && args.maxResearch)  || 10
