@@ -497,16 +497,21 @@ class ListIO(_GraphBinaryTypeIO):
     def _read_list(cls, b, r, flag):
         size = cls.read_int(b)
         the_list = []
+        # Hoist the bound method once; inside this loop b is always the same
+        # file-like stream (never None, never a bytearray), so read_object's
+        # entry-point guards are pure overhead. to_object preserves null-element
+        # semantics by returning None for the null type byte.
+        to_object = r.to_object
         if flag == 0x02:
             while size > 0:
-                itm = r.read_object(b)
+                itm = to_object(b)
                 bulk = int64_unpack(b.read(8))
                 for y in range(bulk):
                     the_list.append(itm)
                 size = size - 1
         else:
             while size > 0:
-                the_list.append(r.read_object(b))
+                the_list.append(to_object(b))
                 size = size - 1
 
         return the_list
@@ -559,9 +564,14 @@ class MapIO(_GraphBinaryTypeIO):
     def _read_map(cls, b, r, flag):
         size = cls.read_int(b)
         the_dict = OrderedDict() if flag == 0x02 else {}
+        # Hoist the bound method once; inside this loop b is always the same
+        # file-like stream (never None, never a bytearray), so read_object's
+        # entry-point guards are pure overhead. to_object preserves null-element
+        # semantics by returning None for the null type byte.
+        to_object = r.to_object
         while size > 0:
-            k = HashableDict.of(r.read_object(b))
-            v = r.read_object(b)
+            k = HashableDict.of(to_object(b))
+            v = to_object(b)
             the_dict[k] = v
             size = size - 1
 
