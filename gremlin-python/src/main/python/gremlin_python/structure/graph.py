@@ -30,6 +30,8 @@ class Graph(object):
 
 
 class Element(object):
+    __slots__ = ('id', 'label', 'properties')
+
     def __init__(self, id, label, properties=None):
         self.id = id
         self.label = label
@@ -64,6 +66,8 @@ class Element(object):
 
 
 class Vertex(Element):
+    __slots__ = ()
+
     def __init__(self, id, label="vertex", properties=None):
         Element.__init__(self, id, label, properties)
 
@@ -72,6 +76,8 @@ class Vertex(Element):
 
 
 class Edge(Element):
+    __slots__ = ('outV', 'inV')
+
     def __init__(self, id, outV, label, inV, properties=None):
         Element.__init__(self, id, label, properties)
         self.outV = outV
@@ -82,6 +88,8 @@ class Edge(Element):
 
 
 class VertexProperty(Element):
+    __slots__ = ('value', 'key', 'vertex')
+
     def __init__(self, id, label, value, vertex, properties=None):
         Element.__init__(self, id, label, properties)
         self.value = value
@@ -93,6 +101,8 @@ class VertexProperty(Element):
 
 
 class Property(object):
+    __slots__ = ('key', 'value', 'element')
+
     def __init__(self, key, value, element):
         self.key = key
         self.value = value
@@ -112,6 +122,8 @@ class Property(object):
 
 
 class Path(object):
+    __slots__ = ('labels', 'objects')
+
     def __init__(self, labels, objects):
         self.labels = labels
         self.objects = objects
