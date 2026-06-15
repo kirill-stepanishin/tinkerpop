@@ -88,14 +88,42 @@ def _make_packer(format_string):
     return pack, unpack
 
 
-int64_pack, int64_unpack = _make_packer('>q')
-int32_pack, int32_unpack = _make_packer('>i')
-int16_pack, int16_unpack = _make_packer('>h')
-int8_pack, int8_unpack = _make_packer('>b')
+int64_pack, _ = _make_packer('>q')
+int32_pack, _ = _make_packer('>i')
+int16_pack, _ = _make_packer('>h')
+int8_pack, _ = _make_packer('>b')
 uint64_pack, uint64_unpack = _make_packer('>Q')
-uint8_pack, uint8_unpack = _make_packer('>B')
+uint8_pack, _ = _make_packer('>B')
 float_pack, float_unpack = _make_packer('>f')
 double_pack, double_unpack = _make_packer('>d')
+
+
+# Integer unpackers use int.from_bytes instead of struct.unpack: it is faster on
+# the read hot path and bit-exact for two's-complement big-endian integers. The
+# signed flag matches each struct format's signedness ('>q'/'>i'/'>h'/'>b' signed,
+# '>B' unsigned). These are module-level globals so every call site -- read_int,
+# the IntIO/LongIO/ShortIO/ByteIO objectify lambdas, and serializer.py's
+# graphbinaryV4.int32_unpack lookup -- picks them up automatically.
+# Float/double/uint64 stay on struct (IEEE-754 bit patterns and BigDecimal cannot
+# be reproduced by int.from_bytes), and the *_pack writers stay on struct.
+def int64_unpack(s):
+    return int.from_bytes(s, 'big', signed=True)
+
+
+def int32_unpack(s):
+    return int.from_bytes(s, 'big', signed=True)
+
+
+def int16_unpack(s):
+    return int.from_bytes(s, 'big', signed=True)
+
+
+def int8_unpack(s):
+    return int.from_bytes(s, 'big', signed=True)
+
+
+def uint8_unpack(s):
+    return int.from_bytes(s, 'big', signed=False)
 
 
 class GraphBinaryTypeType(type):
