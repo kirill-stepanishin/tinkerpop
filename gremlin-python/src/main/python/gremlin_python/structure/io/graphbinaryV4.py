@@ -160,7 +160,7 @@ class GraphBinaryReader(object):
 
     def to_object(self, buff, data_type=None, nullable=True):
         if data_type is None:
-            bt = uint8_unpack(buff.read(1))
+            bt = buff.read(1)[0]
             if bt == DataType.null.value:
                 if nullable:
                     buff.read(1)
