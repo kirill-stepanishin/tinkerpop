@@ -38,6 +38,23 @@
  *                             -> surfaced in the breaksContract bucket for the human.
  */
 
+// NOTE: the Workflow harness requires `export const meta` to be the FIRST statement,
+// and it must be a pure literal. It is hoisted here, above the GLV registry and the
+// GLV resolution below, for that reason.
+export const meta = {
+  name: 'glv-correctness-funnel',
+  description: 'GLV-parameterized: discover, implement, review and gate (mvn clean install incl. integration+feature) GraphBinary deser optimizations; each survivor on its own branch for the operator to benchmark + merge. No benchmarking/profiling in-workflow.',
+  phases: [
+    { title: 'Setup',       detail: 'light: confirm toolchain + clean tree (NO server, NO baseline)' },
+    { title: 'Research',    detail: 'wide diverse-lens idea generation (tiny tweaks -> big refactors)', model: 'opus' },
+    { title: 'Investigate', detail: 'deep per-candidate study; ruthless prune; two-tier invariant classification', model: 'opus' },
+    { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', },
+    { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'opus' },
+    { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'opus' },
+    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', },
+  ],
+}
+
 // ===========================================================================
 //  GLV REGISTRY — the only GLV-specific knowledge. Add a GLV by adding an entry.
 // ===========================================================================
@@ -53,6 +70,13 @@ const GLV_REGISTRY = {
     unitToolDesc: 'pytest (no server)',
     sourceGlobs: 'gremlin_python/structure/io/graphbinaryV4.py, driver/serializer.py, driver/connection.py, driver/aiohttp/transport.py',
     testGlobs: 'tests/unit/structure/io/*, tests/unit/driver/test_http_streaming.py',
+    profileSubdir: 'python-4.0',
+    profileHint:
+`Files: 40-yappi-cpu.txt (yappi, CPU clock — per file:line tsub=self / ttot=cumulative / ncall) and
+40-yappi-wall.txt (wall clock); 40-mem.html + 40.mem.bin (memory); *.callgrind. There is NO written
+analysis — distill the yappi tables yourself, ranking by tsub (self CPU). Expect to see aenum
+DataType.__hash__/__call__/__new__, the graphbinaryV4.py:86 struct-unpack <lambda>, is_null, read_int,
+AiohttpSyncStream.read, and _read_vertexproperty/_read_vertex near the top.`,
     seed:
 `Known hotspots/ideas (verify by reading source): aenum DataType (DataType(bt) construction + __hash__,
 ~15% CPU); the shared struct unpack lambda at graphbinaryV4.py:86 (~6%); is_null; result-object
@@ -90,6 +114,14 @@ INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     unitToolDesc: 'go build + go test (server-free hot-path suites)',
     sourceGlobs: 'gremlin-go/driver/ (GraphBinary reader/serializer, type deserialization, connection/result streaming)',
     testGlobs: 'gremlin-go/driver/*_test.go (GraphBinary + serializer unit tests)',
+    profileSubdir: 'go-4.0',
+    profileHint:
+`Files: go-profile-<date>.md (a WRITTEN end-to-end analysis — read this FIRST; it already ranks the decode
+tower with file:line hotspots and an allocation breakdown), plus raw 40-cpu.txt / 40-cpu.pprof and
+40-heap.txt / 40-heap.pprof / 40-heap.svg and 40-trace.out. The heap (alloc_objects / alloc_space) is the
+most actionable signal. IMPORTANT: the CPU profile's large usleep/pthread_cond_wait self-time is a flagged
+macOS all-thread idle-sampling artifact (pool=1) — DISCOUNT it; rank decode work by the cumulative tower
+and by allocations, not by that idle self-time.`,
     seed:
 `There is NO prior Python-style hotspot list for Go — derive hotspots by READING gremlin-go/driver/.
 Go-idiomatic optimization space: per-element slice reallocation vs preallocation, encoding/binary vs
@@ -110,34 +142,34 @@ ideas (aenum, struct lambdas) — they do not exist here.`,
   },
 }
 
+// ---- normalize args -----------------------------------------------------------
+// The harness may hand `args` over as a JSON-encoded STRING rather than an object.
+// A string is truthy, so `args && args.glv` would pass the guard yet read undefined
+// off the string and silently fall through to the 'python' default. Parse it back
+// into an object first so every read below behaves the same regardless of form.
+let A = args
+if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
+if (!A || typeof A !== 'object') A = {}
+
 // ---- resolve GLV ---------------------------------------------------------------
-const GLV = (args && args.glv) || 'python'
+const GLV = A.glv || 'python'
 const G = GLV_REGISTRY[GLV]
 if (!G) throw new Error(`unknown glv '${GLV}'. Known: ${Object.keys(GLV_REGISTRY).join(', ')}`)
 
-export const meta = {
-  name: 'glv-correctness-funnel',
-  description: 'GLV-parameterized: discover, implement, review and gate (mvn clean install incl. integration+feature) GraphBinary deser optimizations; each survivor on its own branch for the operator to benchmark + merge. No benchmarking/profiling in-workflow.',
-  phases: [
-    { title: 'Setup',       detail: 'light: confirm toolchain + clean tree (NO server, NO baseline)' },
-    { title: 'Research',    detail: 'wide diverse-lens idea generation (tiny tweaks -> big refactors)', model: 'opus' },
-    { title: 'Investigate', detail: 'deep per-candidate study; ruthless prune; two-tier invariant classification', model: 'opus' },
-    { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', },
-    { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'opus' },
-    { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'opus' },
-    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', },
-  ],
-}
-
 // ---- knobs --------------------------------------------------------------------
-const REPO       = (args && args.repo)   || '/Users/kiristep/dev/tinkerpop'
-const BASE       = (args && args.base)   || '4-glv-profiling'   // branch candidates fork from
-const VENV_PY    = (args && args.python) || '/Users/kiristep/venv-glv-4/bin/python'  // python lane only
-const ALLOW_HIGH_CEILING = (args && args.allowHighCeiling) !== false  // default ON
-const MAX_RESEARCH_CANDS = (args && args.maxResearch)  || 10
-const IMPLEMENT_CAP      = (args && args.implementCap) || 6      // narrow the serial mvn tail
-const REPAIR_CHEAP = (args && args.repairCheap) || 2             // code-repair attempts at unit stage
-const REPAIR_MVN   = (args && args.repairMvn)   || 1             // code-repair attempts at the mvn gate
+const REPO       = A.repo   || '/Users/kiristep/dev/tinkerpop'
+const BASE       = A.base   || '4-glv-profiling'   // branch candidates fork from
+const VENV_PY    = A.python || '/Users/kiristep/venv-glv-4/bin/python'  // python lane only
+// Stored profiling results (per GLV) live here, OUTSIDE the repo. The Setup agent reads
+// PROFILE_DIR each run and returns a hotspot digest that seeds Research — see SHARED below.
+// Set args.profileRoot='' (or a missing dir) to fall back to the static registry seed.
+const PROFILE_ROOT = A.profileRoot !== undefined ? A.profileRoot : '/Users/kiristep/dev/profiling-results'
+const PROFILE_DIR  = PROFILE_ROOT && G.profileSubdir ? `${PROFILE_ROOT}/${G.profileSubdir}` : ''
+const ALLOW_HIGH_CEILING = A.allowHighCeiling !== false  // default ON
+const MAX_RESEARCH_CANDS = A.maxResearch  || 10
+const IMPLEMENT_CAP      = A.implementCap || 6      // narrow the serial mvn tail
+const REPAIR_CHEAP = A.repairCheap || 2             // code-repair attempts at unit stage
+const REPAIR_MVN   = A.repairMvn   || 1             // code-repair attempts at the mvn gate
 
 // ---- schemas ------------------------------------------------------------------
 const SETUP = {
@@ -145,6 +177,8 @@ const SETUP = {
     ok: { type: 'boolean', description: 'true only if toolchain present and tree is in a usable, committed state' },
     toolchain: { type: 'string', description: 'what was verified (e.g. python+pytest, or go+mvn)' },
     treeClean: { type: 'boolean' }, abortReason: { type: 'string' }, notes: { type: 'string' },
+    profileFound: { type: 'boolean', description: 'true if the stored profiling dir existed and was read' },
+    profileDigest: { type: 'string', description: 'distilled ranked hotspot summary from the stored profiles (empty if none); seeds Research' },
   },
 }
 const RESEARCH = {
@@ -220,29 +254,16 @@ const FINALIZE = {
   },
 }
 
-// ---- shared context block (GLV-aware) -----------------------------------------
+// ---- invariant lists (used in SHARED and in several phase prompts) -------------
 const hardList = G.invariants.hard.map(s => '   - ' + s).join('\n')
 const softList = G.invariants.soft.map(s => '   - ' + s).join('\n')
-const SHARED =
-`Target: ${G.label} GraphBinary DESERIALIZATION hot path (repo ${REPO}).
-Read the source to ground every claim: ${G.sourceGlobs}. Tests: ${G.testGlobs}.
-${G.seed}
-
-INVARIANTS (two tiers):
- HARD — any breach AUTO-PRUNES the idea (never worth trading for speed):
-${hardList}
- SOFT — allowed but FLAGGED for human judgment (NOT auto-killed); a candidate that needs one of
- these is implemented, tested, and surfaced in the 'breaksContract' bucket:
-${softList}
-${ALLOW_HIGH_CEILING ? 'High-ceiling lane: ' + G.highCeilingNote : 'Do NOT propose high-ceiling (unsafe/native/Cython) candidates.'}
-
-NOTE: there is NO benchmarking or profiling in this pipeline. The operator benchmarks each surviving
-branch by hand afterward. So judge ideas on plausibility + correctness + invariant-safety, and for each
-give a concrete benchmarkHint (what to measure to confirm it helps). Do not claim measured speedups.`
 
 // =================================================================================
 // PHASE 0 — SETUP. Light: confirm the toolchain and a committed tree. No server, no
-// baseline (nothing here profiles or benchmarks). Abort if the toolchain is unusable.
+// baseline. ALSO read the stored profiling results (if any) into a hotspot digest that
+// seeds Research — the script runtime can't read files, but this agent can, so the
+// digest must travel back through the structured result. Profile-read is NON-BLOCKING:
+// a missing/unreadable profile NEVER flips ok=false (we fall back to the static seed).
 phase('Setup')
 log(`Correctness funnel for glv=${GLV} (${G.label}). Gated to 'mvn clean install'; operator benchmarks after.`)
 
@@ -256,16 +277,61 @@ ${GLV === 'python'
 - docker is available (the mvn gate is docker-compose orchestrated).
 - the working tree at ${REPO} is committed enough that worktrees can fork from ${BASE} (treeClean).
 Apply only trivial fixes (e.g. pip install pytest into the venv). If the toolchain is unusable, set
-ok=false with abortReason. Return ONLY the structured object.`,
+ok=false with abortReason.
+
+${PROFILE_DIR ? `PROFILING DIGEST (this is the load-bearing seed for idea generation — do it carefully):
+There are STORED profiling results for this GLV at: ${PROFILE_DIR}
+${G.profileHint}
+Read those files and distill a COMPACT, RANKED hotspot digest into 'profileDigest' (set profileFound=true):
+- The top decode/deserialization hot spots by SELF cost, each with function + file:line where you can find
+  it, the metric (CPU self% or wall, and/or allocation count/bytes), and one phrase on WHY it is hot.
+- Note any explicitly-flagged measurement artifacts to discount (do NOT rank those as hot).
+- 12-25 lines, concrete and source-anchored — this text is injected verbatim into the Research prompts, so
+  it must let an engineer go straight to the right functions. Do NOT propose fixes here; just rank reality.
+This profile read is NON-BLOCKING: if ${PROFILE_DIR} is missing/empty/unreadable, set profileFound=false
+and profileDigest='' and DO NOT set ok=false for that reason alone.`
+  : `No profiling dir configured (profileRoot empty); set profileFound=false, profileDigest='' — Research will use the static seed.`}
+Return ONLY the structured object.`,
   { phase: 'Setup', schema: SETUP })
 
 if (!rig || !rig.ok) { log(`ABORT: setup — ${rig && rig.abortReason}`); return { aborted: true, glv: GLV, reason: (rig && rig.abortReason) || 'setup failed', rig } }
-log(`Setup OK (${rig.toolchain}).`)
+log(`Setup OK (${rig.toolchain}). Profiling digest: ${rig.profileFound ? 'LIVE from ' + PROFILE_DIR : 'none — using static seed'}.`)
+
+// ---- shared context block (GLV-aware) — built AFTER setup so it can weave in the -----
+// live profiling digest. The digest (when present) is the authoritative hotspot source;
+// the static registry seed is the fallback / supplement.
+const PROFILE_SECTION = (rig.profileFound && rig.profileDigest)
+  ? `MEASURED HOTSPOTS (from real stored profiling at ${PROFILE_DIR} — treat as the AUTHORITATIVE ranking;
+prioritize ideas that attack these, and still verify each against the source before claiming anything):
+${rig.profileDigest}
+
+Static background (supplements the measured data above):
+${G.seed}`
+  : `Hotspot guidance (NO live profile was available this run — static seed):
+${G.seed}`
+
+const SHARED =
+`Target: ${G.label} GraphBinary DESERIALIZATION hot path (repo ${REPO}).
+Read the source to ground every claim: ${G.sourceGlobs}. Tests: ${G.testGlobs}.
+${PROFILE_SECTION}
+
+INVARIANTS (two tiers):
+ HARD — any breach AUTO-PRUNES the idea (never worth trading for speed):
+${hardList}
+ SOFT — allowed but FLAGGED for human judgment (NOT auto-killed); a candidate that needs one of
+ these is implemented, tested, and surfaced in the 'breaksContract' bucket:
+${softList}
+${ALLOW_HIGH_CEILING ? 'High-ceiling lane: ' + G.highCeilingNote : 'Do NOT propose high-ceiling (unsafe/native/Cython) candidates.'}
+
+NOTE: there is NO benchmarking or profiling DONE IN this pipeline (the measured hotspots above are from a
+PRIOR profiling run, read at setup). The operator benchmarks each surviving branch by hand afterward. So
+judge ideas on plausibility + correctness + invariant-safety, and for each give a concrete benchmarkHint
+(what to measure to confirm it helps). Do not claim NEW measured speedups.`
 
 // =================================================================================
 // PHASE 1 — RESEARCH. Wide, diverse-lens generation (breadth is cheap here).
 phase('Research')
-const LENSES = (args && args.lenses) || (GLV === 'python'
+const LENSES = A.lenses || (GLV === 'python'
   ? [
       'small, low-risk tweaks (bound-method hoisting, cheaper int unpack via int.from_bytes for integers only, local caching)',
       'enum/type-code dispatch (aenum DataType construction + __hash__; int-keyed dispatch cache)',
