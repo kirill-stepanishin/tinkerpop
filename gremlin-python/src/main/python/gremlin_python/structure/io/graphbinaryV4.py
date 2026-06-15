@@ -78,6 +78,14 @@ class DataType(Enum):
     marker = 0xfd
 
 
+# Memoize the code-to-member lookup once at import time so the hot deserialization
+# path can resolve a type byte to its DataType member with a plain dict get,
+# avoiding aenum's per-call __call__/__new__/__hash__ machinery. DataType has no
+# duplicate values, so this dict is identity-equivalent to DataType(bt) for every
+# valid byte; the deserializer maps stay keyed by DataType members (no API change).
+_dt_by_code = {member.value: member for member in DataType}
+
+
 NULL_BYTES = [DataType.null.value, 0x01]
 
 
@@ -165,7 +173,10 @@ class GraphBinaryReader(object):
                 if nullable:
                     buff.read(1)
                 return None
-            result = self.deserializers[DataType(bt)].objectify(buff, self, nullable)
+            dt = _dt_by_code.get(bt)
+            if dt is None:
+                raise ValueError(f"{bt} is not a valid DataType")
+            result = self.deserializers[dt].objectify(buff, self, nullable)
         else:
             result = self.deserializers[data_type].objectify(buff, self, nullable)
         if self.pdt_registry is not None and isinstance(result, ProviderDefinedType):
