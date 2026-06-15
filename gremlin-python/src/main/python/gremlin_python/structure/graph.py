@@ -65,7 +65,12 @@ class Element(object):
 
 class Vertex(Element):
     def __init__(self, id, label="vertex", properties=None):
-        Element.__init__(self, id, label, properties)
+        # Inlined from Element.__init__ to drop a per-object super-init call;
+        # the `[] if properties is None` default is duplicated here and must
+        # stay in sync with Element.__init__ (graph.py:33-36).
+        self.id = id
+        self.label = label
+        self.properties = [] if properties is None else properties
 
     def __repr__(self):
         return "v[" + str(self.id) + "]"
@@ -73,7 +78,12 @@ class Vertex(Element):
 
 class Edge(Element):
     def __init__(self, id, outV, label, inV, properties=None):
-        Element.__init__(self, id, label, properties)
+        # Inlined from Element.__init__ to drop a per-object super-init call;
+        # the `[] if properties is None` default is duplicated here and must
+        # stay in sync with Element.__init__ (graph.py:33-36).
+        self.id = id
+        self.label = label
+        self.properties = [] if properties is None else properties
         self.outV = outV
         self.inV = inV
 
@@ -83,7 +93,13 @@ class Edge(Element):
 
 class VertexProperty(Element):
     def __init__(self, id, label, value, vertex, properties=None):
-        Element.__init__(self, id, label, properties)
+        # Inlined from Element.__init__ to drop a per-object super-init call;
+        # the `[] if properties is None` default is duplicated here and must
+        # stay in sync with Element.__init__ (graph.py:33-36). label must be
+        # assigned before key, since key derives from self.label below.
+        self.id = id
+        self.label = label
+        self.properties = [] if properties is None else properties
         self.value = value
         self.key = self.label
         self.vertex = vertex
