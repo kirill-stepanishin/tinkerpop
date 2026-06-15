@@ -78,7 +78,13 @@ class DataType(Enum):
     marker = 0xfd
 
 
-NULL_BYTES = [DataType.null.value, 0x01]
+# Freeze the null type code from the canonical enum once at import. The per-object
+# to_object dispatch compares the type byte against this module-level int constant,
+# which avoids an aenum `value` property lookup on every decoded object while keeping
+# the value provably identical to DataType.null.value (0xfe).
+_NULL_CODE = DataType.null.value
+
+NULL_BYTES = [_NULL_CODE, 0x01]
 
 
 def _make_packer(format_string):
@@ -161,7 +167,7 @@ class GraphBinaryReader(object):
     def to_object(self, buff, data_type=None, nullable=True):
         if data_type is None:
             bt = uint8_unpack(buff.read(1))
-            if bt == DataType.null.value:
+            if bt == _NULL_CODE:
                 if nullable:
                     buff.read(1)
                 return None
