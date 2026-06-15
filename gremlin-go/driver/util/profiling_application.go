@@ -26,6 +26,9 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
+	"runtime/pprof"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -379,6 +382,61 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 	}
 
 	fmt.Println("----------------------------TEST CYCLE----------------------------")
+
+	// Env-gated profiling hook (inert unless GREMLIN_PROFILE is set). Scopes the
+	// profile to the measured TEST CYCLE only (warmups/client build excluded).
+	//   GREMLIN_PROFILE=cpu   -> CPU profile (+ heap profile written at stop)
+	//   GREMLIN_PROFILE=trace -> runtime/trace execution trace
+	//   GREMLIN_PROFILE_OUT   -> output path prefix (default /tmp/go-glv)
+	// CPU sampling covers all goroutines, so the off-main-thread decode worker is
+	// captured. See .kiro/steering/go-glv-profiling-plan.md.
+	var profStop func()
+	if mode := os.Getenv("GREMLIN_PROFILE"); mode != "" {
+		out := os.Getenv("GREMLIN_PROFILE_OUT")
+		if out == "" {
+			out = "/tmp/go-glv"
+		}
+		switch mode {
+		case "cpu":
+			cf, err := os.Create(out + "-cpu.pprof")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "profile: cannot create cpu file: %v\n", err)
+				break
+			}
+			if err := pprof.StartCPUProfile(cf); err != nil {
+				fmt.Fprintf(os.Stderr, "profile: StartCPUProfile: %v\n", err)
+				cf.Close()
+				break
+			}
+			profStop = func() {
+				pprof.StopCPUProfile()
+				cf.Close()
+				runtime.GC() // settle heap stats before dumping the allocation profile
+				if hf, herr := os.Create(out + "-heap.pprof"); herr == nil {
+					_ = pprof.WriteHeapProfile(hf)
+					hf.Close()
+				}
+			}
+		case "trace":
+			tf, err := os.Create(out + "-trace.out")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "profile: cannot create trace file: %v\n", err)
+				break
+			}
+			if err := trace.Start(tf); err != nil {
+				fmt.Fprintf(os.Stderr, "profile: trace.Start: %v\n", err)
+				tf.Close()
+				break
+			}
+			profStop = func() {
+				trace.Stop()
+				tf.Close()
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "profile: unknown GREMLIN_PROFILE=%q (want cpu|trace)\n", mode)
+		}
+	}
+
 	var totalLatency float64
 	var completedExecs int
 	testStart := time.Now()
@@ -420,6 +478,10 @@ func runLatencyTest(url string, warmups, executions int, exercise bool,
 
 		client.Close()
 		time.Sleep(time.Duration(pauseBetweenRuns) * time.Millisecond)
+	}
+
+	if profStop != nil {
+		profStop()
 	}
 
 	if completedExecs > 0 {
