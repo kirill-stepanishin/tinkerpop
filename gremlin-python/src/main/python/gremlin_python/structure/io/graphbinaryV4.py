@@ -511,6 +511,27 @@ class ListIO(_GraphBinaryTypeIO):
 
         return the_list
 
+    @classmethod
+    def _read_value_label(cls, b, r):
+        # Read a single label encoded as a value-only, non-nullable list<string>
+        # and return that label, equivalent to
+        # ``r.to_object(b, DataType.list, False)[0]`` but without building a
+        # throwaway one-element list. V4 always encodes vertex/edge/VP labels as
+        # a length-1 value list, so fast-path size == 1: read exactly one
+        # fully-qualified element via r.read_object (full to_object dispatch:
+        # type-code byte -> null-flag -> length -> bytes) and return it directly.
+        # For any other size (0 or >1) fall back to the generic non-bulk list
+        # read so the buffer stays exactly aligned, then take the first element
+        # to preserve the original ``[0]`` semantics.
+        size = cls.read_int(b)
+        if size == 1:
+            return r.read_object(b)
+        the_list = []
+        while size > 0:
+            the_list.append(r.read_object(b))
+            size = size - 1
+        return the_list[0]
+
 
 class SetDeserializer(ListIO):
 
@@ -613,9 +634,9 @@ class EdgeIO(_GraphBinaryTypeIO):
     def _read_edge(cls, b, r):
         edgeid = r.read_object(b)
         # reading single string value for now according to GraphBinaryV4
-        edgelbl = r.to_object(b, DataType.list, False)[0]
-        inv = Vertex(r.read_object(b), r.to_object(b, DataType.list, False)[0])
-        outv = Vertex(r.read_object(b), r.to_object(b, DataType.list, False)[0])
+        edgelbl = ListIO._read_value_label(b, r)
+        inv = Vertex(r.read_object(b), ListIO._read_value_label(b, r))
+        outv = Vertex(r.read_object(b), ListIO._read_value_label(b, r))
         b.read(2)
         props = r.read_object(b)
         # null properties are returned as empty lists
@@ -713,14 +734,14 @@ class TinkerGraphIO(_GraphBinaryTypeIO):
         vertex_count = r.to_object(b, DataType.int, False)
         for _ in range(vertex_count):
             v_id = r.read_object(b)
-            v_label = r.to_object(b, DataType.list, False)[0]
+            v_label = ListIO._read_value_label(b, r)
             vertex = Vertex(v_id, v_label)
             graph.vertices[v_id] = vertex
 
             vp_count = r.to_object(b, DataType.int, False)
             for _ in range(vp_count):
                 vp_id = r.read_object(b)
-                vp_label = r.to_object(b, DataType.list, False)[0]
+                vp_label = ListIO._read_value_label(b, r)
                 vp_value = r.read_object(b)
                 r.read_object(b)  # discard parent
                 vp = VertexProperty(vp_id, vp_label, vp_value, vertex)
@@ -733,7 +754,7 @@ class TinkerGraphIO(_GraphBinaryTypeIO):
         edge_count = r.to_object(b, DataType.int, False)
         for _ in range(edge_count):
             e_id = r.read_object(b)
-            e_label = r.to_object(b, DataType.list, False)[0]
+            e_label = ListIO._read_value_label(b, r)
             in_v_id = r.read_object(b)
             r.read_object(b)  # discard in-v label
             out_v_id = r.read_object(b)
@@ -772,7 +793,7 @@ class VertexIO(_GraphBinaryTypeIO):
     def _read_vertex(cls, b, r):
         vertex_id = r.read_object(b)
         # reading single string value for now according to GraphBinaryV4
-        vertex_label = r.to_object(b, DataType.list, False)[0]
+        vertex_label = ListIO._read_value_label(b, r)
         props = r.read_object(b)
         # null properties are returned as empty lists
         properties = [] if props is None else props
@@ -803,7 +824,7 @@ class VertexPropertyIO(_GraphBinaryTypeIO):
     @classmethod
     def _read_vertexproperty(cls, b, r):
         # reading single string value for now according to GraphBinaryV4
-        vp = VertexProperty(r.read_object(b), r.to_object(b, DataType.list, False)[0], r.read_object(b), None)
+        vp = VertexProperty(r.read_object(b), ListIO._read_value_label(b, r), r.read_object(b), None)
         b.read(2)
         properties = r.read_object(b)
         # null properties are returned as empty lists
