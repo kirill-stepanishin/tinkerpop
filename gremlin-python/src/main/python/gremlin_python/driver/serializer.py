@@ -103,7 +103,7 @@ class GraphBinarySerializersV4(object):
 
         while True:
             obj = reader.to_object(stream)
-            if obj == Marker.end_of_stream():
+            if type(obj) is Marker:
                 break
             if bulked:
                 bulk = reader.to_object(stream)
