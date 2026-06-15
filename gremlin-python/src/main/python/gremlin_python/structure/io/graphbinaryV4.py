@@ -496,20 +496,17 @@ class ListIO(_GraphBinaryTypeIO):
     @classmethod
     def _read_list(cls, b, r, flag):
         size = cls.read_int(b)
-        the_list = []
+        read_object = r.read_object
         if flag == 0x02:
+            the_list = []
             while size > 0:
-                itm = r.read_object(b)
+                itm = read_object(b)
                 bulk = int64_unpack(b.read(8))
-                for y in range(bulk):
-                    the_list.append(itm)
+                the_list.extend([itm] * bulk)
                 size = size - 1
+            return the_list
         else:
-            while size > 0:
-                the_list.append(r.read_object(b))
-                size = size - 1
-
-        return the_list
+            return [read_object(b) for _ in range(size)]
 
 
 class SetDeserializer(ListIO):
