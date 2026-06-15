@@ -222,6 +222,27 @@ class _GraphBinaryTypeIO(object, metaclass=GraphBinaryTypeType):
     def is_null(cls, buff, reader, else_opt, nullable=True):
         return None if nullable and buff.read(1)[0] == 0x01 else else_opt(buff, reader)
 
+    @classmethod
+    def read_nullable_fixed(cls, buff, width, decode, nullable=True):
+        """Guarded null-flag + fixed-width value read for scalar types.
+
+        Reads the 1-byte null flag FIRST and only reads the ``width`` value
+        bytes when the flag says the value is present (0x00). On a typed null
+        (flag 0x01) no value bytes follow on the wire, so they must NOT be
+        read -- reading them would consume bytes belonging to the next object
+        in the stream. This is therefore the same two-read shape as
+        ``is_null`` + a value read; it is bit-exact and never over-reads, and
+        it still pulls bytes on demand so IncompleteReadError propagates when
+        the stream ends mid-value.
+
+        When ``nullable`` is False the flag byte is absent on the wire, so the
+        value bytes are read directly with a single ``buff.read(width)``.
+        """
+        if nullable:
+            if buff.read(1)[0] == 0x01:
+                return None
+        return decode(buff.read(width))
+
     def dictify(self, obj, writer, to_extend, as_value=False, nullable=True):
         raise NotImplementedError()
 
@@ -247,7 +268,7 @@ class LongIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: int64_unpack(buff.read(8)), nullable)
+        return cls.read_nullable_fixed(buff, 8, int64_unpack, nullable)
 
 
 class IntIO(LongIO):
@@ -259,7 +280,7 @@ class IntIO(LongIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: cls.read_int(b), nullable)
+        return cls.read_nullable_fixed(buff, 4, int32_unpack, nullable)
 
 
 class ShortIO(LongIO):
@@ -271,7 +292,7 @@ class ShortIO(LongIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: int16_unpack(buff.read(2)), nullable)
+        return cls.read_nullable_fixed(buff, 2, int16_unpack, nullable)
 
 
 class BigIntIO(_GraphBinaryTypeIO):
@@ -345,7 +366,7 @@ class FloatIO(LongIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: float_unpack(b.read(4)), nullable)
+        return cls.read_nullable_fixed(buff, 4, float_unpack, nullable)
 
 
 class DoubleIO(FloatIO):
@@ -360,7 +381,7 @@ class DoubleIO(FloatIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: double_unpack(b.read(8)), nullable)
+        return cls.read_nullable_fixed(buff, 8, double_unpack, nullable)
 
 
 class BigDecimalIO(_GraphBinaryTypeIO):
@@ -868,9 +889,9 @@ class ByteIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader,
-                           lambda b, r: int.__new__(SingleByte, int8_unpack(b.read(1))),
-                           nullable)
+        return cls.read_nullable_fixed(buff, 1,
+                                       lambda data: int.__new__(SingleByte, int8_unpack(data)),
+                                       nullable)
 
 
 class BinaryIO(_GraphBinaryTypeIO):
@@ -906,9 +927,9 @@ class BooleanIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader,
-                           lambda b, r: True if int8_unpack(b.read(1)) == 0x01 else False,
-                           nullable)
+        return cls.read_nullable_fixed(buff, 1,
+                                       lambda data: True if int8_unpack(data) == 0x01 else False,
+                                       nullable)
 
 
 class DurationIO(_GraphBinaryTypeIO):
