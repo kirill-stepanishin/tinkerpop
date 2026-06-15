@@ -247,7 +247,9 @@ class LongIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: int64_unpack(buff.read(8)), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return int64_unpack(buff.read(8))
 
 
 class IntIO(LongIO):
@@ -259,7 +261,9 @@ class IntIO(LongIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: cls.read_int(b), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return cls.read_int(buff)
 
 
 class ShortIO(LongIO):
@@ -271,7 +275,9 @@ class ShortIO(LongIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: int16_unpack(buff.read(2)), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return int16_unpack(buff.read(2))
 
 
 class BigIntIO(_GraphBinaryTypeIO):
@@ -306,7 +312,9 @@ class BigIntIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=False):
-        return cls.is_null(buff, reader, lambda b, r: cls.read_bigint(b), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return cls.read_bigint(buff)
 
 
 def _long_bits_to_double(bits):
@@ -345,7 +353,9 @@ class FloatIO(LongIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: float_unpack(b.read(4)), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return float_unpack(buff.read(4))
 
 
 class DoubleIO(FloatIO):
@@ -360,7 +370,9 @@ class DoubleIO(FloatIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: double_unpack(b.read(8)), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return double_unpack(buff.read(8))
 
 
 class BigDecimalIO(_GraphBinaryTypeIO):
@@ -382,7 +394,9 @@ class BigDecimalIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=False):
-        return cls.is_null(buff, reader, lambda b, r: cls._read(b), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return cls._read(buff)
 
 
 class DateTimeIO(_GraphBinaryTypeIO):
@@ -465,7 +479,9 @@ class StringIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: b.read(cls.read_int(b)).decode("utf-8"), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return buff.read(cls.read_int(buff)).decode("utf-8")
 
 
 class ListIO(_GraphBinaryTypeIO):
@@ -581,7 +597,9 @@ class UuidIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader, lambda b, r: uuid.UUID(bytes=b.read(16)), nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return uuid.UUID(bytes=buff.read(16))
 
 
 class EdgeIO(_GraphBinaryTypeIO):
@@ -868,9 +886,9 @@ class ByteIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader,
-                           lambda b, r: int.__new__(SingleByte, int8_unpack(b.read(1))),
-                           nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return int.__new__(SingleByte, int8_unpack(buff.read(1)))
 
 
 class BinaryIO(_GraphBinaryTypeIO):
@@ -906,9 +924,9 @@ class BooleanIO(_GraphBinaryTypeIO):
 
     @classmethod
     def objectify(cls, buff, reader, nullable=True):
-        return cls.is_null(buff, reader,
-                           lambda b, r: True if int8_unpack(b.read(1)) == 0x01 else False,
-                           nullable)
+        if nullable and buff.read(1)[0] == 0x01:
+            return None
+        return int8_unpack(buff.read(1)) == 0x01
 
 
 class DurationIO(_GraphBinaryTypeIO):
