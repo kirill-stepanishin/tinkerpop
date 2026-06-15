@@ -204,7 +204,8 @@ server config to the network so the US-WEST-2 client can reach it:
 sed -i 's/^host: localhost/host: 0.0.0.0/' conf/gremlin-server-modern.yaml
 ```
 Leave the server running in its own `tmux`/`screen` pane for the whole session. See
-`tinkerpop-benchmarking-guide.md` §3–4 for full server tuning.
+`java-benchmarking-guide.md` §3–4 (or `bench/BENCHMARKING.md` "Server setup & tuning")
+for full server tuning.
 
 ### Confirm the harness resolves the python launcher (no server needed)
 
@@ -342,6 +343,21 @@ git -C "$REPO" checkout 4-glv-python-perf      # leave the tree on baseline when
 ---
 
 ## 5. Read the results
+
+### 5·0. Publish to S3, then analyze in the notebook (preferred)
+
+The reproducible path is **`bench/auto/candidate-analysis.ipynb`** (pandas + plotly), which pulls
+every arm's `ledger.csv` + yappi profiles from S3 and computes the gate + guards + charts + a
+PASS/FAIL verdict — no hand-run `awk`. From the EC2 client, publish the results once the sweep is done:
+
+```bash
+aws s3 sync ~/cand-results "s3://kirill-tp-benchmarks/cand-results/python/" \
+  --exclude "*.callgrind"      # callgrind is large + not needed for the notebook
+```
+
+Then open `candidate-analysis.ipynb` anywhere with AWS creds for the bucket, set `GLV='python'`
+in the parameters cell, and **Run All**. It reproduces §5a–§5c below deterministically. The raw
+shell commands that follow are kept as a no-Jupyter fallback / cross-check.
 
 ### 5a. Wall-clock latency from the ledgers (quick read)
 
@@ -507,6 +523,8 @@ for s in 1 2 3; do for b in "${BRANCHES[@]}"; do run_arm "$b" "$s"; done; done
   discipline, and the local-vs-EC2 warning this doc follows.
 - `bench/SCHEMA.md` — the `RESULT_JSON:` contract behind every ledger row.
 - `bench/matrix.yaml` — the test definitions; `protocol-overhead` medium = `times(12)`, tiny = `g.V()`.
-- `tinkerpop-benchmarking-guide.md` / `python-benchmarking-plan.md` — full two-EC2 cross-region
+- `java-benchmarking-guide.md` / `python-benchmarking-plan.md` — full two-EC2 cross-region
   setup and the `control` reference numbers in `results.csv`.
+- `bench/auto/candidate-analysis.ipynb` — the reproducible pandas/plotly notebook that reads the
+  S3-published results and renders the gate, guards, charts, and PASS/FAIL verdict (§5·0).
 - `bench/auto/RUNBOOK.md` — the autonomous funnel that proposed these candidates.

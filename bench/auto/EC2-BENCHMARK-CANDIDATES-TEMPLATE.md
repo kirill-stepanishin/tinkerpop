@@ -284,6 +284,22 @@ git -C "$REPO" checkout "$BASELINE"      # leave the tree on baseline when done
 
 ## 6. Read the results
 
+### 6·0. Publish to S3, then analyze in the notebook (preferred)
+
+The reproducible path is **`bench/auto/candidate-analysis.ipynb`** (pandas + plotly): it pulls every
+arm's `ledger.csv` + CPU profiles from S3 and computes the gate, guards, charts, and a PASS/FAIL
+verdict — replacing the hand-run shell below. From the client, publish results after the sweep:
+
+```bash
+aws s3 sync "$RESULTS" "s3://kirill-tp-benchmarks/cand-results/$GLV/" \
+  --exclude "*.callgrind"      # large + not needed by the notebook
+```
+
+Then open the notebook with AWS creds for the bucket, set its `GLV` parameter to match, and **Run
+All**. The shell in §6a–§6c is kept as a no-Jupyter fallback / cross-check. (The notebook's CPU-gate
+parser is tuned for the Python yappi `tsub` table; for a profiler with a different text layout, adjust
+its `sum_tsub` cell — the ledger-based wall-clock and guard logic is GLV-independent.)
+
 ### 6a. Wall-clock (quick read; use the UNPROFILED signal)
 
 ```bash
@@ -373,9 +389,11 @@ git -C "$REPO" checkout "$BASELINE"            # tree back on baseline
 ## See also
 
 - **`EC2-BENCHMARK-CANDIDATES.md`** — the fully worked gremlin-python instance of this template.
+- **`candidate-analysis.ipynb`** — the reproducible pandas/plotly notebook that reads the
+  S3-published results and renders the gate, guards, charts, and PASS/FAIL verdict (§6·0).
 - `bench/README.md` — `bench run` usage, append-only ledger, `--label` discipline, local-vs-EC2 warning.
 - `bench/SCHEMA.md` — the `RESULT_JSON:` contract behind every ledger row.
 - `bench/matrix.yaml` — test definitions; `protocol-overhead` medium = `times(12)`, tiny = `g.V()`.
-- `<lang>-benchmarking-plan.md` / `tinkerpop-benchmarking-guide.md` — per-language build + the
+- `<lang>-benchmarking-plan.md` / `java-benchmarking-guide.md` — per-language build + the
   two-EC2 cross-region `control` reference numbers in `results.csv`.
 - `bench/auto/RUNBOOK.md` — the autonomous funnel that proposes candidate branches.

@@ -27,8 +27,9 @@ records one wide row per measured cell to an append-only ledger.
 This harness **replaces** the legacy shell pipeline (`common.sh` +
 `cat*.sh` + `run-all.sh` + `export-results.py`). Those scripts have now been
 **deleted** from this directory — this harness is the sole supported entry
-point. Only `WALKTHROUGH.md` remains, retained as a legacy manual procedure for
-historical reference.
+point. For the higher-level map of all benchmarking work — the finished
+3.7-vs-4.0 study, this harness, and the `auto/` optimization funnels — see
+[`BENCHMARKING.md`](BENCHMARKING.md).
 
 ## What "run-only, per-branch, version-ignorant" means
 
@@ -353,4 +354,4 @@ python3 -m orchestrator run --label control --host <server-ip> --output-dir ~/be
 - `SCHEMA.md` — the `RESULT_JSON:` stdout contract every GLV app must satisfy.
 - `config.yaml` — branch settings (transport, concurrency model, host, launchers).
 - `matrix.yaml` — the four tests encoded as data.
-- `WALKTHROUGH.md` — legacy manual procedure, retained for historical reference.
+- `BENCHMARKING.md` — top-level map: the finished 3.7-vs-4.0 study, this harness, and the `auto/` optimization funnels.
