@@ -69,6 +69,10 @@ services:
       - RUN_INTEGRATION_WITH_ALIAS_TESTS=true
       - RUN_BASIC_AUTH_INTEGRATION_TESTS=true
       - VERTEX_LABEL=go-example
+      # proxy.golang.org and sum.golang.org are blocked by corp network security,
+      # so fetch modules directly from their source repos and skip the checksum DB.
+      - GOPROXY=direct
+      - GOSUMDB=off
     working_dir: /go_app
     command: >
       bash -c "go install github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest
