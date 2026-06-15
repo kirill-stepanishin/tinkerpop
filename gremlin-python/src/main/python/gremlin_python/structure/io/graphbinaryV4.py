@@ -803,12 +803,13 @@ class VertexPropertyIO(_GraphBinaryTypeIO):
     @classmethod
     def _read_vertexproperty(cls, b, r):
         # reading single string value for now according to GraphBinaryV4
-        vp = VertexProperty(r.read_object(b), r.to_object(b, DataType.list, False)[0], r.read_object(b), None)
+        vp_id = r.read_object(b)
+        vp_label = r.to_object(b, DataType.list, False)[0]
+        vp_value = r.read_object(b)
         b.read(2)
         properties = r.read_object(b)
         # null properties are returned as empty lists
-        vp.properties = [] if properties is None else properties
-        return vp
+        return VertexProperty(vp_id, vp_label, vp_value, None, [] if properties is None else properties)
 
 
 class _EnumIO(_GraphBinaryTypeIO):
