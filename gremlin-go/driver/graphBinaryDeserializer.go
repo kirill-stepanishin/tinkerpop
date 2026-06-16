@@ -67,16 +67,23 @@ type GraphBinaryDeserializer struct {
 // GraphBinary flag for bulked list/set
 const flagBulked = 0x02
 
+// graphBinaryReadBufferSize is the size of the bufio.Reader buffer wrapping the
+// response socket. At 32KB it cuts the number of syscall-driven refills ~4x
+// versus the previous 8KB for large responses while keeping the per-connection
+// buffer a fixed, bounded allocation (never response-sized), preserving the
+// incremental-streaming and bounded-memory invariants.
+const graphBinaryReadBufferSize = 32 * 1024
+
 // NewGraphBinaryDeserializer creates a new GraphBinaryDeserializer that reads from the given io.Reader.
 // The reader is wrapped in a buffered reader for efficient reading.
 func NewGraphBinaryDeserializer(r io.Reader) *GraphBinaryDeserializer {
-	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, 8192)}
+	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, graphBinaryReadBufferSize)}
 }
 
 // NewGraphBinaryDeserializerWithRegistry creates a new GraphBinaryDeserializer with a PDTRegistry
 // for automatic hydration of ProviderDefinedType values.
 func NewGraphBinaryDeserializerWithRegistry(r io.Reader, registry *PDTRegistry) *GraphBinaryDeserializer {
-	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, 8192), pdtRegistry: registry}
+	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, graphBinaryReadBufferSize), pdtRegistry: registry}
 }
 
 func (d *GraphBinaryDeserializer) readByte() (byte, error) {
