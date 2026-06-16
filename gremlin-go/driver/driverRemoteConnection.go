@@ -57,6 +57,16 @@ type DriverRemoteConnectionSettings struct {
 	// Default: 30 seconds. Set to 0 to use the default.
 	KeepAliveInterval time.Duration
 
+	// ResultChannelCapacity is the buffered capacity of the result channel used to
+	// stream decoded results from the server. A larger capacity lets the decoder run
+	// ahead of a lagging consumer (improving throughput) at the cost of more buffered
+	// memory; results are still delivered incrementally as they are decoded and are
+	// never fully materialized in a single buffer. The channel always stays a
+	// fixed-size, bounded chan *Result.
+	// Default: 1000 (used when set to 0 or negative). Values above the documented
+	// maximum are clamped so a misconfigured caller cannot request an enormous buffer.
+	ResultChannelCapacity int
+
 	// RequestInterceptors are functions that modify HTTP requests before sending.
 	RequestInterceptors []RequestInterceptor
 
@@ -112,6 +122,7 @@ func NewDriverRemoteConnection(
 		enableCompression:        settings.EnableCompression,
 		enableUserAgentOnConnect: settings.EnableUserAgentOnConnect,
 		pdtRegistry:              settings.PDTRegistry,
+		resultChannelCapacity:    settings.ResultChannelCapacity,
 	}
 
 	logHandler := newLogHandler(settings.Logger, settings.LogVerbosity, settings.Language)

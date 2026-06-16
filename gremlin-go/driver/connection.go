@@ -44,6 +44,7 @@ type connectionSettings struct {
 	enableCompression        bool
 	enableUserAgentOnConnect bool
 	pdtRegistry              *PDTRegistry
+	resultChannelCapacity    int
 }
 
 // connection handles HTTP request/response for Gremlin queries.
@@ -65,6 +66,25 @@ const (
 	defaultConnectionTimeout   = 15 * time.Second  // Java: CONNECTION_SETUP_TIMEOUT_MILLIS
 	defaultKeepAliveInterval   = 30 * time.Second  // TCP keep-alive probe interval
 )
+
+// maxResultChannelCapacity is the documented upper bound for the result channel
+// capacity. It caps how far the decoder may run ahead of a lagging consumer so a
+// misconfigured caller cannot request an unbounded/enormous buffer. The channel
+// always stays a fixed-size chan *Result and is never unbounded.
+const maxResultChannelCapacity = 1 << 20 // 1,048,576
+
+// clampResultChannelCapacity resolves a requested result channel capacity to a
+// valid, bounded size. A non-positive request falls back to defaultCapacity, and
+// any request above maxResultChannelCapacity is clamped to that documented max.
+func clampResultChannelCapacity(capacity int) int {
+	if capacity <= 0 {
+		return defaultCapacity
+	}
+	if capacity > maxResultChannelCapacity {
+		return maxResultChannelCapacity
+	}
+	return capacity
+}
 
 func newConnection(handler *logHandler, url string, connSettings *connectionSettings) *connection {
 	// Apply defaults for zero values
@@ -122,7 +142,7 @@ func (c *connection) AddInterceptor(interceptor RequestInterceptor) {
 // Blocks until response headers arrive, ensuring the server has acknowledged
 // receipt of the request before returning.
 func (c *connection) submit(req *RequestMessage) (ResultSet, error) {
-	rs := newChannelResultSet()
+	rs := newChannelResultSetCapacity(clampResultChannelCapacity(c.connSettings.resultChannelCapacity))
 
 	// Send the HTTP request synchronously — blocks until response headers arrive
 	resp, err := c.sendRequest(req)
