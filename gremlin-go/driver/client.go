@@ -65,6 +65,13 @@ type ClientSettings struct {
 	// PDTRegistry enables automatic hydration of ProviderDefinedType values during deserialization.
 	PDTRegistry *PDTRegistry
 
+	// ReceiveBufferSize is the size, in bytes, of the buffered reader used when
+	// streaming server responses. Larger buffers can improve throughput for large
+	// streaming responses by reducing read syscalls; smaller buffers suit small
+	// queries. The value is clamped to a bounded maximum. Default: 0 (use the
+	// built-in default size).
+	ReceiveBufferSize int
+
 	// RequestInterceptors are functions that modify HTTP requests before sending.
 	RequestInterceptors []RequestInterceptor
 
@@ -116,6 +123,7 @@ func NewClient(url string, configurations ...func(settings *ClientSettings)) (*C
 		enableCompression:        settings.EnableCompression,
 		enableUserAgentOnConnect: settings.EnableUserAgentOnConnect,
 		pdtRegistry:              settings.PDTRegistry,
+		receiveBufferSize:        settings.ReceiveBufferSize,
 	}
 
 	logHandler := newLogHandler(settings.Logger, settings.LogVerbosity, settings.Language)

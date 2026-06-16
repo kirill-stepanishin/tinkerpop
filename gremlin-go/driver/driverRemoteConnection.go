@@ -67,6 +67,13 @@ type DriverRemoteConnectionSettings struct {
 
 	// PDTRegistry enables registry-based dehydration in the gremlin-lang translator.
 	PDTRegistry *PDTRegistry
+
+	// ReceiveBufferSize is the size, in bytes, of the buffered reader used when
+	// streaming server responses. Larger buffers can improve throughput for large
+	// streaming responses by reducing read syscalls; smaller buffers suit small
+	// queries. The value is clamped to a bounded maximum. Default: 0 (use the
+	// built-in default size).
+	ReceiveBufferSize int
 }
 
 // DriverRemoteConnection is a remote connection.
@@ -112,6 +119,7 @@ func NewDriverRemoteConnection(
 		enableCompression:        settings.EnableCompression,
 		enableUserAgentOnConnect: settings.EnableUserAgentOnConnect,
 		pdtRegistry:              settings.PDTRegistry,
+		receiveBufferSize:        settings.ReceiveBufferSize,
 	}
 
 	logHandler := newLogHandler(settings.Logger, settings.LogVerbosity, settings.Language)

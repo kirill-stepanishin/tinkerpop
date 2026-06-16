@@ -67,16 +67,47 @@ type GraphBinaryDeserializer struct {
 // GraphBinary flag for bulked list/set
 const flagBulked = 0x02
 
+// defaultBufioReaderSize is the default size of the buffered reader wrapping the
+// underlying stream. It is used whenever a non-positive buffer size is requested.
+const defaultBufioReaderSize = 8192
+
+// maxBufioReaderSize is the upper bound on the buffered reader size. Requested
+// sizes are clamped to this value so the buffer can never grow unbounded.
+const maxBufioReaderSize = 1 << 20
+
 // NewGraphBinaryDeserializer creates a new GraphBinaryDeserializer that reads from the given io.Reader.
 // The reader is wrapped in a buffered reader for efficient reading.
 func NewGraphBinaryDeserializer(r io.Reader) *GraphBinaryDeserializer {
-	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, 8192)}
+	return newGraphBinaryDeserializer(r, nil, defaultBufioReaderSize)
 }
 
 // NewGraphBinaryDeserializerWithRegistry creates a new GraphBinaryDeserializer with a PDTRegistry
 // for automatic hydration of ProviderDefinedType values.
 func NewGraphBinaryDeserializerWithRegistry(r io.Reader, registry *PDTRegistry) *GraphBinaryDeserializer {
-	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, 8192), pdtRegistry: registry}
+	return newGraphBinaryDeserializer(r, registry, defaultBufioReaderSize)
+}
+
+// NewGraphBinaryDeserializerWithOptions creates a new GraphBinaryDeserializer with an optional
+// PDTRegistry and a configurable buffered-reader size. A bufSize <= 0 selects defaultBufioReaderSize,
+// and any requested size is clamped to maxBufioReaderSize so the buffer can never grow unbounded.
+//
+// This only affects the size of the buffer used to reduce read syscalls; it does not change the
+// streaming semantics: results are still decoded and delivered incrementally as bytes arrive, and
+// no whole-response materialization occurs.
+func NewGraphBinaryDeserializerWithOptions(r io.Reader, registry *PDTRegistry, bufSize int) *GraphBinaryDeserializer {
+	return newGraphBinaryDeserializer(r, registry, bufSize)
+}
+
+// newGraphBinaryDeserializer is the internal constructor that the exported constructors delegate to.
+// It clamps the requested buffer size to a bounded range before wrapping the reader.
+func newGraphBinaryDeserializer(r io.Reader, registry *PDTRegistry, bufSize int) *GraphBinaryDeserializer {
+	if bufSize <= 0 {
+		bufSize = defaultBufioReaderSize
+	}
+	if bufSize > maxBufioReaderSize {
+		bufSize = maxBufioReaderSize
+	}
+	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, bufSize), pdtRegistry: registry}
 }
 
 func (d *GraphBinaryDeserializer) readByte() (byte, error) {

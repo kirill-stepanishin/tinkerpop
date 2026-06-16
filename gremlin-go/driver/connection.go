@@ -44,6 +44,9 @@ type connectionSettings struct {
 	enableCompression        bool
 	enableUserAgentOnConnect bool
 	pdtRegistry              *PDTRegistry
+	// receiveBufferSize is the size of the buffered reader used when streaming
+	// server responses. A value <= 0 selects the deserializer's default size.
+	receiveBufferSize int
 }
 
 // connection handles HTTP request/response for Gremlin queries.
@@ -304,12 +307,7 @@ func (c *connection) getReader(resp *http.Response) (io.Reader, io.Closer, error
 }
 
 func (c *connection) streamToResultSet(reader io.Reader, rs ResultSet) {
-	var d *GraphBinaryDeserializer
-	if c.connSettings.pdtRegistry != nil {
-		d = NewGraphBinaryDeserializerWithRegistry(reader, c.connSettings.pdtRegistry)
-	} else {
-		d = NewGraphBinaryDeserializer(reader)
-	}
+	d := NewGraphBinaryDeserializerWithOptions(reader, c.connSettings.pdtRegistry, c.connSettings.receiveBufferSize)
 	if err := d.ReadHeader(); err != nil {
 		if err != io.EOF {
 			c.logHandler.logf(Error, failedToReceiveResponse, err.Error())
