@@ -79,6 +79,13 @@ func NewGraphBinaryDeserializerWithRegistry(r io.Reader, registry *PDTRegistry) 
 	return &GraphBinaryDeserializer{r: bufio.NewReaderSize(r, 8192), pdtRegistry: registry}
 }
 
+// emptyProps is a shared, zero-length, zero-capacity slice assigned to the
+// Properties field of property-less elements. The deserializer only ever
+// assigns (never appends to) Properties after construction, so sharing a
+// single backing array across elements is safe; any later user append
+// reallocates rather than mutating the shared backing array.
+var emptyProps = []interface{}{}
+
 func (d *GraphBinaryDeserializer) readByte() (byte, error) {
 	if d.err != nil {
 		return 0, d.err
@@ -375,7 +382,7 @@ func (d *GraphBinaryDeserializer) readVertex(withProps bool) (*Vertex, error) {
 		if err != nil {
 			return nil, err
 		}
-		v.Properties = make([]interface{}, 0)
+		v.Properties = emptyProps
 		if props != nil {
 			v.Properties = props
 		}
@@ -420,7 +427,7 @@ func (d *GraphBinaryDeserializer) readEdge() (*Edge, error) {
 		InV:     *inV,
 		OutV:    *outV,
 	}
-	e.Properties = make([]interface{}, 0)
+	e.Properties = emptyProps
 	if props != nil {
 		e.Properties = props
 	}
@@ -510,7 +517,7 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 				Value:   vpValue,
 				Vertex:  *v,
 			}
-			vp.Properties = make([]interface{}, 0)
+			vp.Properties = emptyProps
 			if metaProps != nil {
 				vp.Properties = metaProps
 			}
@@ -525,7 +532,7 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 			}
 			v.Properties = vpList
 		} else {
-			v.Properties = make([]interface{}, 0)
+			v.Properties = emptyProps
 		}
 
 		graph.Vertices[vId] = v
@@ -602,7 +609,7 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 			InV:     *inV,
 			OutV:    *outV,
 		}
-		e.Properties = make([]interface{}, 0)
+		e.Properties = emptyProps
 		if props != nil {
 			e.Properties = props
 		}
@@ -690,7 +697,7 @@ func (d *GraphBinaryDeserializer) readVertexProperty() (*VertexProperty, error) 
 		Key:     label,
 		Value:   value,
 	}
-	vp.Properties = make([]interface{}, 0)
+	vp.Properties = emptyProps
 	if props != nil {
 		vp.Properties = props
 	}
