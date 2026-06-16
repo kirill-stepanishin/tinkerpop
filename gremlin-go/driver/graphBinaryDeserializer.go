@@ -375,9 +375,10 @@ func (d *GraphBinaryDeserializer) readVertex(withProps bool) (*Vertex, error) {
 		if err != nil {
 			return nil, err
 		}
-		v.Properties = make([]interface{}, 0)
 		if props != nil {
 			v.Properties = props
+		} else {
+			v.Properties = make([]interface{}, 0)
 		}
 	}
 	return v, nil
@@ -420,9 +421,10 @@ func (d *GraphBinaryDeserializer) readEdge() (*Edge, error) {
 		InV:     *inV,
 		OutV:    *outV,
 	}
-	e.Properties = make([]interface{}, 0)
 	if props != nil {
 		e.Properties = props
+	} else {
+		e.Properties = make([]interface{}, 0)
 	}
 	return e, nil
 }
@@ -510,9 +512,10 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 				Value:   vpValue,
 				Vertex:  *v,
 			}
-			vp.Properties = make([]interface{}, 0)
 			if metaProps != nil {
 				vp.Properties = metaProps
+			} else {
+				vp.Properties = make([]interface{}, 0)
 			}
 			vps = append(vps, vp)
 		}
@@ -602,9 +605,10 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 			InV:     *inV,
 			OutV:    *outV,
 		}
-		e.Properties = make([]interface{}, 0)
 		if props != nil {
 			e.Properties = props
+		} else {
+			e.Properties = make([]interface{}, 0)
 		}
 		graph.Edges[eId] = e
 	}
@@ -690,9 +694,10 @@ func (d *GraphBinaryDeserializer) readVertexProperty() (*VertexProperty, error) 
 		Key:     label,
 		Value:   value,
 	}
-	vp.Properties = make([]interface{}, 0)
 	if props != nil {
 		vp.Properties = props
+	} else {
+		vp.Properties = make([]interface{}, 0)
 	}
 	return vp, nil
 }
