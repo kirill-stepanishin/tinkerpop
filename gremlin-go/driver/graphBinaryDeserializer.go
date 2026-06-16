@@ -28,6 +28,7 @@ import (
 	"math/big"
 	"reflect"
 	"time"
+	"unsafe"
 
 	"github.com/google/uuid"
 )
@@ -295,7 +296,11 @@ func (d *GraphBinaryDeserializer) readString() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(buf), nil
+	// buf is a fresh []byte from readBytes that is never reused or mutated
+	// after this point, and length>0 here (the length==0 case returns above),
+	// so aliasing it as a string is safe and avoids a second allocation+copy.
+	// unsafe.SliceData is the canonical Go 1.20+ form (total, no index panic).
+	return unsafe.String(unsafe.SliceData(buf), len(buf)), nil
 }
 
 func (d *GraphBinaryDeserializer) readList(bulked bool) (interface{}, error) {
