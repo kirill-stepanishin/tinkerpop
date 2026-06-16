@@ -165,21 +165,21 @@ func (d *GraphBinaryDeserializer) IsBulked() bool {
 // Returns the deserialized object, or an error if reading fails.
 // When the end of the result stream is reached, this returns a Marker equal to EndOfStream().
 func (d *GraphBinaryDeserializer) ReadFullyQualified() (interface{}, error) {
-	dtByte, err := d.readByte()
-	if err != nil {
+	if d.err != nil {
+		return nil, d.err
+	}
+	// Every fully-qualified value carries a 2-byte header (type code + flag).
+	// nullType's trailing 0x01 (see nullBytes in graphBinarySerializer.go) is
+	// consumed by this same 2-byte read, so no second sticky-error check is needed.
+	if _, err := io.ReadFull(d.r, d.buf[:2]); err != nil {
+		d.err = err
 		return nil, err
 	}
-	dt := dataType(dtByte)
+	dt := dataType(d.buf[0])
 	if dt == nullType {
-		if _, err := d.readByte(); err != nil {
-			return nil, err
-		}
 		return nil, nil
 	}
-	flag, err := d.readByte()
-	if err != nil {
-		return nil, err
-	}
+	flag := d.buf[1]
 	if flag == valueFlagNull {
 		return nil, nil
 	}
