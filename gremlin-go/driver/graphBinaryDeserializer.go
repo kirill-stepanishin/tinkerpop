@@ -104,6 +104,23 @@ func (d *GraphBinaryDeserializer) readBytes(n int) ([]byte, error) {
 	return buf, nil
 }
 
+// readFixed reads exactly n bytes into the shared scratch buffer and returns
+// the slice d.buf[:n]. The returned slice aliases the shared scratch and MUST
+// be decoded immediately by the caller (before any subsequent read); it must
+// never be retained. n must not exceed len(d.buf) (8); this helper is only for
+// fixed-width primitive reads, not variable-length reads (string/bytes/uuid),
+// which legitimately allocate via readBytes.
+func (d *GraphBinaryDeserializer) readFixed(n int) ([]byte, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	if _, err := io.ReadFull(d.r, d.buf[:n]); err != nil {
+		d.err = err
+		return nil, err
+	}
+	return d.buf[:n], nil
+}
+
 func (d *GraphBinaryDeserializer) readInt32() (int32, error) {
 	if d.err != nil {
 		return 0, d.err
@@ -195,37 +212,28 @@ func (d *GraphBinaryDeserializer) readValue(dt dataType, flag byte) (interface{}
 	case stringType:
 		return d.readString()
 	case doubleType:
-		if d.err != nil {
-			return nil, d.err
-		}
-		if _, err := io.ReadFull(d.r, d.buf[:8]); err != nil {
-			d.err = err
+		b, err := d.readFixed(8)
+		if err != nil {
 			return nil, err
 		}
-		return math.Float64frombits(binary.BigEndian.Uint64(d.buf[:8])), nil
+		return math.Float64frombits(binary.BigEndian.Uint64(b)), nil
 	case floatType:
-		if d.err != nil {
-			return nil, d.err
-		}
-		if _, err := io.ReadFull(d.r, d.buf[:4]); err != nil {
-			d.err = err
+		b, err := d.readFixed(4)
+		if err != nil {
 			return nil, err
 		}
-		return math.Float32frombits(binary.BigEndian.Uint32(d.buf[:4])), nil
+		return math.Float32frombits(binary.BigEndian.Uint32(b)), nil
 	case booleanType:
 		b, err := d.readByte()
 		return b != 0, err
 	case byteType:
 		return d.readByte()
 	case shortType:
-		if d.err != nil {
-			return nil, d.err
-		}
-		if _, err := io.ReadFull(d.r, d.buf[:2]); err != nil {
-			d.err = err
+		b, err := d.readFixed(2)
+		if err != nil {
 			return nil, err
 		}
-		return int16(binary.BigEndian.Uint16(d.buf[:2])), nil
+		return int16(binary.BigEndian.Uint16(b)), nil
 	case uuidType:
 		buf, err := d.readBytes(16)
 		if err != nil {
