@@ -324,6 +324,71 @@ func (d *GraphBinaryDeserializer) readList(bulked bool) (interface{}, error) {
 	return list, nil
 }
 
+// readSingleLabel decodes a value-only list<string> label and returns its first
+// element as a plain string. It is byte-for-byte equivalent to readList(false)
+// followed by the labelSlice[0].(string) assertion used at every label site, but
+// avoids allocating the backing []interface{} and boxing the string for the
+// dominant single-element case that V4 always emits for element labels.
+func (d *GraphBinaryDeserializer) readSingleLabel() (string, error) {
+	length, err := d.readInt32()
+	if err != nil {
+		return "", err
+	}
+	if length == 1 {
+		// Inline the single fully-qualified element read, mirroring
+		// ReadFullyQualified, without allocating a slice or boxing the value.
+		dtByte, err := d.readByte()
+		if err != nil {
+			return "", err
+		}
+		dt := dataType(dtByte)
+		if dt == nullType {
+			// Consume the trailing null flag byte, then fail exactly as the
+			// old nil -> [0].(string) assertion did.
+			if _, err := d.readByte(); err != nil {
+				return "", err
+			}
+			return "", newError(err0404ReadNullTypeError)
+		}
+		flag, err := d.readByte()
+		if err != nil {
+			return "", err
+		}
+		if flag == valueFlagNull {
+			return "", newError(err0404ReadNullTypeError)
+		}
+		if dt == stringType {
+			return d.readString()
+		}
+		// Unexpected element type: fall back to the generic value read so the
+		// correct number of bytes is consumed, then fail the string assertion
+		// exactly as the old labelSlice[0].(string) path did.
+		if _, err := d.readValue(dt, flag); err != nil {
+			return "", err
+		}
+		return "", newError(err0404ReadNullTypeError)
+	}
+	// Rare/defensive length != 1 case: reconstruct the remaining elements with
+	// the same loop body readList uses so the byte consumption is identical,
+	// then apply the existing len==0 -> err0404 / [0].(string) logic.
+	list := make([]interface{}, 0, length)
+	for i := int32(0); i < length; i++ {
+		val, err := d.ReadFullyQualified()
+		if err != nil {
+			return "", err
+		}
+		list = append(list, val)
+	}
+	if len(list) == 0 {
+		return "", newError(err0404ReadNullTypeError)
+	}
+	label, ok := list[0].(string)
+	if !ok {
+		return "", newError(err0404ReadNullTypeError)
+	}
+	return label, nil
+}
+
 func (d *GraphBinaryDeserializer) readMap() (interface{}, error) {
 	length, err := d.readUint32()
 	if err != nil {
@@ -357,17 +422,9 @@ func (d *GraphBinaryDeserializer) readVertex(withProps bool) (*Vertex, error) {
 	if err != nil {
 		return nil, err
 	}
-	labels, err := d.readList(false)
+	label, err := d.readSingleLabel()
 	if err != nil {
 		return nil, err
-	}
-	labelSlice, ok := labels.([]interface{})
-	if !ok || len(labelSlice) == 0 {
-		return nil, newError(err0404ReadNullTypeError)
-	}
-	label, ok := labelSlice[0].(string)
-	if !ok {
-		return nil, newError(err0404ReadNullTypeError)
 	}
 	v := &Vertex{Element: Element{Id: id, Label: label}}
 	if withProps {
@@ -388,17 +445,9 @@ func (d *GraphBinaryDeserializer) readEdge() (*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	labels, err := d.readList(false)
+	label, err := d.readSingleLabel()
 	if err != nil {
 		return nil, err
-	}
-	labelSlice, ok := labels.([]interface{})
-	if !ok || len(labelSlice) == 0 {
-		return nil, newError(err0404ReadNullTypeError)
-	}
-	label, ok := labelSlice[0].(string)
-	if !ok {
-		return nil, newError(err0404ReadNullTypeError)
 	}
 	inV, err := d.readVertex(false)
 	if err != nil {
@@ -444,17 +493,9 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 		}
 
 		// {labels} list<string> value-only, take first element
-		vLabels, err := d.readList(false)
+		vLabel, err := d.readSingleLabel()
 		if err != nil {
 			return nil, err
-		}
-		labelSlice, ok := vLabels.([]interface{})
-		if !ok || len(labelSlice) == 0 {
-			return nil, newError(err0404ReadNullTypeError)
-		}
-		vLabel, ok := labelSlice[0].(string)
-		if !ok {
-			return nil, newError(err0404ReadNullTypeError)
 		}
 
 		v := &Vertex{Element: Element{Id: vId, Label: vLabel}}
@@ -474,17 +515,9 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 			}
 
 			// {vp_label} list<string> value-only, take first element
-			vpLabels, err := d.readList(false)
+			vpLabel, err := d.readSingleLabel()
 			if err != nil {
 				return nil, err
-			}
-			vpLabelSlice, ok := vpLabels.([]interface{})
-			if !ok || len(vpLabelSlice) == 0 {
-				return nil, newError(err0404ReadNullTypeError)
-			}
-			vpLabel, ok := vpLabelSlice[0].(string)
-			if !ok {
-				return nil, newError(err0404ReadNullTypeError)
 			}
 
 			// {vp_value} fully-qualified
@@ -545,17 +578,9 @@ func (d *GraphBinaryDeserializer) readGraph() (*Graph, error) {
 		}
 
 		// {labels} list<string> value-only, take first element
-		eLabels, err := d.readList(false)
+		eLabel, err := d.readSingleLabel()
 		if err != nil {
 			return nil, err
-		}
-		labelSlice, ok := eLabels.([]interface{})
-		if !ok || len(labelSlice) == 0 {
-			return nil, newError(err0404ReadNullTypeError)
-		}
-		eLabel, ok := labelSlice[0].(string)
-		if !ok {
-			return nil, newError(err0404ReadNullTypeError)
 		}
 
 		// {inV_id} fully-qualified
@@ -662,17 +687,9 @@ func (d *GraphBinaryDeserializer) readVertexProperty() (*VertexProperty, error) 
 	if err != nil {
 		return nil, err
 	}
-	labels, err := d.readList(false)
+	label, err := d.readSingleLabel()
 	if err != nil {
 		return nil, err
-	}
-	labelSlice, ok := labels.([]interface{})
-	if !ok || len(labelSlice) == 0 {
-		return nil, newError(err0404ReadNullTypeError)
-	}
-	label, ok := labelSlice[0].(string)
-	if !ok {
-		return nil, newError(err0404ReadNullTypeError)
 	}
 	value, err := d.ReadFullyQualified()
 	if err != nil {
