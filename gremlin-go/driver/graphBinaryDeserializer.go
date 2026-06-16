@@ -104,6 +104,21 @@ func (d *GraphBinaryDeserializer) readBytes(n int) ([]byte, error) {
 	return buf, nil
 }
 
+// discard2 reads and discards a 2-byte terminator without heap allocation.
+// It reuses the deserializer's stack-backed scratch buffer (d.buf is [8]byte,
+// so d.buf[:2] is always in-bounds) and preserves the sticky-error pattern.
+func (d *GraphBinaryDeserializer) discard2() error {
+	if d.err != nil {
+		return d.err
+	}
+	_, err := io.ReadFull(d.r, d.buf[:2])
+	if err != nil {
+		d.err = err
+		return err
+	}
+	return nil
+}
+
 func (d *GraphBinaryDeserializer) readInt32() (int32, error) {
 	if d.err != nil {
 		return 0, d.err
@@ -227,11 +242,17 @@ func (d *GraphBinaryDeserializer) readValue(dt dataType, flag byte) (interface{}
 		}
 		return int16(binary.BigEndian.Uint16(d.buf[:2])), nil
 	case uuidType:
-		buf, err := d.readBytes(16)
-		if err != nil {
+		if d.err != nil {
+			return nil, d.err
+		}
+		var b [16]byte
+		if _, err := io.ReadFull(d.r, b[:]); err != nil {
+			d.err = err
 			return nil, err
 		}
-		id, err := uuid.FromBytes(buf)
+		// uuid.FromBytes copies its input (UnmarshalBinary does copy(uuid[:], data)),
+		// so the stack array b does not escape.
+		id, err := uuid.FromBytes(b[:])
 		if err != nil {
 			return nil, err
 		}
@@ -408,7 +429,7 @@ func (d *GraphBinaryDeserializer) readEdge() (*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.readBytes(2); err != nil {
+	if err := d.discard2(); err != nil {
 		return nil, err
 	}
 	props, err := d.ReadFullyQualified()
@@ -651,7 +672,7 @@ func (d *GraphBinaryDeserializer) readProperty() (*Property, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.readBytes(2); err != nil {
+	if err := d.discard2(); err != nil {
 		return nil, err
 	}
 	return &Property{Key: key, Value: value}, nil
@@ -678,7 +699,7 @@ func (d *GraphBinaryDeserializer) readVertexProperty() (*VertexProperty, error) 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.readBytes(2); err != nil {
+	if err := d.discard2(); err != nil {
 		return nil, err
 	}
 	props, err := d.ReadFullyQualified()
