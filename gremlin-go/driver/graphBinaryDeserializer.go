@@ -291,6 +291,21 @@ func (d *GraphBinaryDeserializer) readString() (string, error) {
 	if length == 0 {
 		return "", nil
 	}
+	// Fast path: if the string fits within the buffered reader, view the bytes
+	// via Peek, materialize a single heap string, then Discard. This eliminates
+	// the intermediate make([]byte, length) allocation in readBytes for the
+	// common case (label/key strings, all <= 8192 bytes). On any Peek error
+	// (notably bufio.ErrBufferFull when length > 8192, or a short read at a
+	// refill boundary), fall through to the unchanged readBytes path, which
+	// retains io.ReadFull blocking semantics.
+	if peeked, perr := d.r.Peek(int(length)); perr == nil {
+		s := string(peeked)
+		if _, derr := d.r.Discard(int(length)); derr != nil {
+			d.err = derr
+			return "", derr
+		}
+		return s, nil
+	}
 	buf, err := d.readBytes(int(length))
 	if err != nil {
 		return "", err
