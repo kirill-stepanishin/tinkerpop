@@ -68,6 +68,10 @@ const GLV_REGISTRY = {
     unitTest: (py) => `cd <worktree>/gremlin-python/src/main/python && ` +
       `PYTHONPATH="$(pwd)" ${py} -m pytest tests/unit/structure/io/ tests/unit/driver/test_http_streaming.py -q`,
     unitToolDesc: 'pytest (no server)',
+    // What the .glv-activated mvn gate runs, and the log signal that PROVES it actually ran
+    // (vs a seconds-long no-op false green). Injected into the gate prompt's STEP 1/STEP 3.
+    suiteDesc: 'pytest integration (~347 tests, no-server unit + server-backed) AND the radish feature/gherkin suite, x3 serializer modes (graphbinary bulked / parameterized / plain)',
+    suiteProof: 'a MINUTES-long build whose log shows the docker integration tests plus the radish feature run — typically ~163 features / ~2149 scenarios / ~9890 steps, printed once per mode (x3). A sub-10-second BUILD SUCCESS with no radish/pytest counts means the profile did NOT activate',
     sourceGlobs: 'gremlin_python/structure/io/graphbinaryV4.py, driver/serializer.py, driver/connection.py, driver/aiohttp/transport.py',
     testGlobs: 'tests/unit/structure/io/*, tests/unit/driver/test_http_streaming.py',
     profileSubdir: 'python-4.0',
@@ -112,6 +116,10 @@ INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     unitTest: () => `cd <worktree>/gremlin-go && go build ./... && ` +
       `go test ./driver/ -run 'TestGraphBinary|TestSerializer|TestResult|TestGraph|TestGValue' -count=1`,
     unitToolDesc: 'go build + go test (server-free hot-path suites)',
+    // Go's .glv profile runs a docker-compose `go test` integration suite (NOT radish — gremlin-go has
+    // zero .feature files; its only 'generate-radish-support' step is shared groovy data-gen, not a test run).
+    suiteDesc: "the docker-compose Go integration suite: `docker compose up --build --exit-code-from gremlin-go-integration-tests` — go test against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
+    suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server container becoming healthy, and the gremlin-go-integration-tests container running `go test` (PASS/ok lines, package timings) and exiting 0. There is NO radish output for Go — do NOT expect feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/go-test activity means the profile did NOT activate',
     sourceGlobs: 'gremlin-go/driver/ (GraphBinary reader/serializer, type deserialization, connection/result streaming)',
     testGlobs: 'gremlin-go/driver/*_test.go (GraphBinary + serializer unit tests)',
     profileSubdir: 'go-4.0',
@@ -241,7 +249,7 @@ const REVIEW = {
 const MVN = {
   type: 'object', required: ['id', 'fullSuiteGreen', 'suiteRan', 'summary'], properties: {
     id: { type: 'string' }, fullSuiteGreen: { type: 'boolean' },
-    suiteRan: { type: 'boolean', description: 'true ONLY if the integration+feature(radish) suite ACTUALLY executed (minutes-long build, real feature/scenario counts). A sub-10s BUILD SUCCESS means the .glv profile did not activate => false. fullSuiteGreen with suiteRan=false is a false green and is dropped.' },
+    suiteRan: { type: 'boolean', description: 'true ONLY if the .glv-activated integration suite ACTUALLY executed (a minutes-long build with real test evidence per the GLV proof: radish feature/scenario counts for python, the docker go-test integration container for go). A sub-10s BUILD SUCCESS means the .glv profile did not activate => false. fullSuiteGreen with suiteRan=false is a false green and is dropped.' },
     integrationGreen: { type: 'boolean' }, featureGreen: { type: 'boolean' },
     repairedAtMvn: { type: 'boolean', description: 'true if code (never a test) changed to pass => triggers re-review' },
     failTail: { type: 'string' }, summary: { type: 'string' },
@@ -495,9 +503,9 @@ STEP 0 — LOCATE THE CANDIDATE (do NOT skip; a wrong/missing tree makes the who
   suiteRan=false, and explain in failTail — do NOT build the wrong tree.
 
 STEP 1 — ACTIVATE THE FULL SUITE (CRITICAL — without this, mvn is a NO-OP false green):
-  The ${G.module} integration + feature (radish) tests live in a maven profile activated ONLY by the
+  The ${G.module} integration suite (${G.suiteDesc}) lives in a maven profile activated ONLY by the
   presence of a gitignored marker file '${G.module}/.glv'. A fresh worktree does NOT have it, so a plain
-  'mvn clean install' will BUILD SUCCESS in seconds while running ZERO integration/feature tests. You MUST:
+  'mvn clean install' will BUILD SUCCESS in seconds while running ZERO integration tests. You MUST:
     cd <worktree>/${G.module} && touch .glv
   (it is gitignored, so it does not dirty the candidate diff).
 
@@ -508,10 +516,9 @@ Run it in the BACKGROUND and POLL to completion (the build far exceeds the 10-mi
 a single call on it; poll with short status checks so progress is visible). Only one build runs at a time,
 so the fixed ports (45940/8182) are free.
 
-STEP 3 — PROVE THE SUITE ACTUALLY RAN (false-green guard): a real run takes MINUTES and the log shows the
-docker integration tests + the radish feature run (many features/scenarios/steps). Set suiteRan=true ONLY
-if you saw that evidence; a sub-10-second "BUILD SUCCESS" means the profile did NOT activate (suiteRan=false,
-fullSuiteGreen=false — go back to STEP 1). Capture the test/feature counts in summary.
+STEP 3 — PROVE THE SUITE ACTUALLY RAN (false-green guard): the proof for ${G.label} is: ${G.suiteProof}.
+Set suiteRan=true ONLY if you saw that evidence (and capture the concrete test/feature counts in summary);
+otherwise set suiteRan=false, fullSuiteGreen=false and go back to STEP 1.
 
 CODE-REPAIR: if it fails on a CODE bug, you MAY fix YOUR OWN code (NEVER a test) and retry up to
 ${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGreen=true ONLY on a real BUILD
