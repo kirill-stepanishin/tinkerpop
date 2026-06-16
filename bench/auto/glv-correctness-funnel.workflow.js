@@ -223,6 +223,7 @@ const INVESTIGATION = {
 const BUILD = {
   type: 'object', required: ['id', 'unitGreen', 'summary'], properties: {
     id: { type: 'string' }, unitGreen: { type: 'boolean' },
+    branchName: { type: 'string', description: 'the actual checked-out branch — MUST equal auto/cand-<glv>-<id> or the downstream gate will not find this candidate' },
     repairAttempts: { type: 'number' }, touchedTests: { type: 'boolean', description: 'MUST be false' },
     filesTouched: { type: 'array', items: { type: 'string' } },
     diffStat: { type: 'string' }, unitOutputTail: { type: 'string' }, summary: { type: 'string' },
@@ -238,8 +239,9 @@ const REVIEW = {
   },
 }
 const MVN = {
-  type: 'object', required: ['id', 'fullSuiteGreen', 'summary'], properties: {
+  type: 'object', required: ['id', 'fullSuiteGreen', 'suiteRan', 'summary'], properties: {
     id: { type: 'string' }, fullSuiteGreen: { type: 'boolean' },
+    suiteRan: { type: 'boolean', description: 'true ONLY if the integration+feature(radish) suite ACTUALLY executed (minutes-long build, real feature/scenario counts). A sub-10s BUILD SUCCESS means the .glv profile did not activate => false. fullSuiteGreen with suiteRan=false is a false green and is dropped.' },
     integrationGreen: { type: 'boolean' }, featureGreen: { type: 'boolean' },
     repairedAtMvn: { type: 'boolean', description: 'true if code (never a test) changed to pass => triggers re-review' },
     failTail: { type: 'string' }, summary: { type: 'string' },
@@ -424,8 +426,18 @@ const reviewed = await pipeline(viable,
 Area: ${c.hotspot}. Recommended variant: ${(invById[c.id] || {}).recommendedVariant || '(safest form)'}.
 Approach: ${c.approach}
 
-You are in a fresh git worktree on branch auto/cand-${GLV}-${c.id} (forked from ${BASE}). Work ONLY here,
-under ${G.sourceSubdir}/. Make ONE clean commit — the branch must stand alone and be mergeable by itself.
+You are in a fresh git worktree. The harness checked it out on an internal placeholder branch (e.g.
+worktree-wf_...) that may be forked from the repo's DEFAULT branch, NOT from this run's intended base
+${BASE}. Both must be corrected. Your FIRST actions MUST be, in the worktree:
+    git fetch --quiet . ${BASE} || true
+    git checkout -B auto/cand-${GLV}-${c.id} ${BASE}
+This pins the candidate to the correct base ${BASE} AND the correct branch name (the DOWNSTREAM mvn gate and
+finalizer look the candidate up STRICTLY by the name auto/cand-${GLV}-${c.id}; a placeholder name makes the
+gate report "branch does not exist" and silently drops the candidate; a wrong base benchmarks it against the
+wrong tree). Verify BOTH: 'git rev-parse --abbrev-ref HEAD' == auto/cand-${GLV}-${c.id} and
+'git merge-base --is-ancestor ${BASE} HEAD' succeeds. Record the branch in branchName.
+Work ONLY here, under ${G.sourceSubdir}/. Make ONE clean commit — the branch must stand alone and be
+mergeable by itself.
 Preserve the HARD invariants:
 ${hardList}
 ${c.breaksContract !== 'none' ? `This candidate intentionally affects the SOFT contract '${c.breaksContract}' — allowed and will be flagged; change nothing MORE than necessary.` : 'Do not change any public contract.'}
@@ -472,17 +484,42 @@ const passed = []
 for (const x of approved) {
   const c = x.c
   const m = await agent(
-`Run the FULL correctness gate for candidate "${c.id}" (branch auto/cand-${GLV}-${c.id}):
+`Run the FULL correctness gate for candidate "${c.id}" on branch auto/cand-${GLV}-${c.id}:
 Docker-orchestrated maven build — unit + integration + feature against a containerized server.
+
+STEP 0 — LOCATE THE CANDIDATE (do NOT skip; a wrong/missing tree makes the whole gate meaningless):
+  Find the worktree for branch auto/cand-${GLV}-${c.id} ('git worktree list'). If no worktree is on that
+  branch, it may still exist under an internal placeholder name (worktree-wf_...) that holds this
+  candidate's commit — locate that worktree and 'git checkout -B auto/cand-${GLV}-${c.id}' there so the
+  branch name is correct. If you truly cannot find the candidate's code anywhere, set fullSuiteGreen=false,
+  suiteRan=false, and explain in failTail — do NOT build the wrong tree.
+
+STEP 1 — ACTIVATE THE FULL SUITE (CRITICAL — without this, mvn is a NO-OP false green):
+  The ${G.module} integration + feature (radish) tests live in a maven profile activated ONLY by the
+  presence of a gitignored marker file '${G.module}/.glv'. A fresh worktree does NOT have it, so a plain
+  'mvn clean install' will BUILD SUCCESS in seconds while running ZERO integration/feature tests. You MUST:
+    cd <worktree>/${G.module} && touch .glv
+  (it is gitignored, so it does not dirty the candidate diff).
+
+STEP 2 — RUN IT:
   cd <worktree>/${G.module} && docker compose down || true   # clear any stale stack first
   mvn clean install -Dasciidoc.skip=true
 Run it in the BACKGROUND and POLL to completion (the build far exceeds the 10-min Bash cap — do NOT block
 a single call on it; poll with short status checks so progress is visible). Only one build runs at a time,
 so the fixed ports (45940/8182) are free.
+
+STEP 3 — PROVE THE SUITE ACTUALLY RAN (false-green guard): a real run takes MINUTES and the log shows the
+docker integration tests + the radish feature run (many features/scenarios/steps). Set suiteRan=true ONLY
+if you saw that evidence; a sub-10-second "BUILD SUCCESS" means the profile did NOT activate (suiteRan=false,
+fullSuiteGreen=false — go back to STEP 1). Capture the test/feature counts in summary.
+
 CODE-REPAIR: if it fails on a CODE bug, you MAY fix YOUR OWN code (NEVER a test) and retry up to
-${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGreen=true ONLY on BUILD
-SUCCESS. On failure capture the failing test/section in failTail. Return ONLY the structured object.`,
+${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGreen=true ONLY on a real BUILD
+SUCCESS with suiteRan=true. On failure capture the failing test/section in failTail. Return ONLY the object.`,
     { phase: 'Correctness', label: `mvn:${c.id}`, schema: MVN, model: 'opus' })
+  if (m && m.fullSuiteGreen && m.suiteRan === false) {
+    log(`DROP ${c.id}: mvn gate reported green but suiteRan=false (.glv no-op false-green) — ${m.summary}`); continue
+  }
   if (!m || !m.fullSuiteGreen) { log(`DROP ${c.id}: mvn gate — ${m && m.summary}`); continue }
   if (m.repairedAtMvn) {
     const r2 = await agent(
