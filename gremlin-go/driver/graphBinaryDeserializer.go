@@ -27,6 +27,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -186,101 +187,214 @@ func (d *GraphBinaryDeserializer) ReadFullyQualified() (interface{}, error) {
 	return d.readValue(dt, flag)
 }
 
-func (d *GraphBinaryDeserializer) readValue(dt dataType, flag byte) (interface{}, error) {
-	switch dt {
-	case intType:
+// readValueTable dispatches value-only GraphBinary decoding by data-type code.
+// It is a 256-entry function-pointer table populated once in init(), replacing
+// the former per-call type switch in readValue. Every entry takes the flag byte
+// so that listType/setType can branch on flag == flagBulked; all other entries
+// ignore it. Unused / upstream-handled codes (0x00, gaps, nullType 0xFE) point
+// at readValueErr0408 so an unknown code surfaces the same error as before.
+var readValueTable [256]func(*GraphBinaryDeserializer, byte) (interface{}, error)
+
+func init() {
+	// Default every slot to the unknown-type error reader; explicit per-code
+	// assignments below override the supported types. Built without a loop over
+	// the dataType constants so the table stays auditable against the old switch.
+	for i := range readValueTable {
+		readValueTable[i] = readValueErr0408
+	}
+
+	readValueTable[intType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readInt32()
-	case longType:
+	}
+	readValueTable[longType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readInt64()
-	case stringType:
+	}
+	readValueTable[stringType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readString()
-	case doubleType:
-		if d.err != nil {
-			return nil, d.err
-		}
-		if _, err := io.ReadFull(d.r, d.buf[:8]); err != nil {
-			d.err = err
-			return nil, err
-		}
-		return math.Float64frombits(binary.BigEndian.Uint64(d.buf[:8])), nil
-	case floatType:
-		if d.err != nil {
-			return nil, d.err
-		}
-		if _, err := io.ReadFull(d.r, d.buf[:4]); err != nil {
-			d.err = err
-			return nil, err
-		}
-		return math.Float32frombits(binary.BigEndian.Uint32(d.buf[:4])), nil
-	case booleanType:
-		b, err := d.readByte()
-		return b != 0, err
-	case byteType:
+	}
+	readValueTable[doubleType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readDouble()
+	}
+	readValueTable[floatType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readFloat()
+	}
+	readValueTable[booleanType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readBoolean()
+	}
+	readValueTable[byteType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readByte()
-	case shortType:
-		if d.err != nil {
-			return nil, d.err
-		}
-		if _, err := io.ReadFull(d.r, d.buf[:2]); err != nil {
-			d.err = err
-			return nil, err
-		}
-		return int16(binary.BigEndian.Uint16(d.buf[:2])), nil
-	case uuidType:
-		buf, err := d.readBytes(16)
-		if err != nil {
-			return nil, err
-		}
-		id, err := uuid.FromBytes(buf)
-		if err != nil {
-			return nil, err
-		}
-		return id, nil
-	case listType:
+	}
+	readValueTable[shortType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readShort()
+	}
+	readValueTable[uuidType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readUUID()
+	}
+	readValueTable[listType] = func(d *GraphBinaryDeserializer, flag byte) (interface{}, error) {
 		return d.readList(flag == flagBulked)
-	case setType:
-		list, err := d.readList(flag == flagBulked)
-		if err != nil {
-			return nil, err
-		}
-		return NewSimpleSet(list.([]interface{})...), nil
-	case mapType:
+	}
+	readValueTable[setType] = func(d *GraphBinaryDeserializer, flag byte) (interface{}, error) {
+		return d.readSet(flag == flagBulked)
+	}
+	readValueTable[mapType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readMap()
-	case vertexType:
+	}
+	readValueTable[vertexType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readVertex(true)
-	case edgeType:
+	}
+	readValueTable[edgeType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readEdge()
-	case graphType:
+	}
+	readValueTable[graphType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readGraph()
-	case pathType:
+	}
+	readValueTable[pathType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readPath()
-	case propertyType:
+	}
+	readValueTable[propertyType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readProperty()
-	case vertexPropertyType:
+	}
+	readValueTable[vertexPropertyType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readVertexProperty()
-	case bigIntegerType:
+	}
+	readValueTable[bigIntegerType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readBigInt()
-	case bigDecimalType:
+	}
+	readValueTable[bigDecimalType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readBigDecimal()
-	case datetimeType:
+	}
+	readValueTable[datetimeType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readDateTime()
-	case durationType:
+	}
+	readValueTable[durationType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readDuration()
-	case markerType:
-		b, err := d.readByte()
-		if err != nil {
-			return nil, err
-		}
-		return Of(b)
-	case byteBuffer:
+	}
+	readValueTable[markerType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readMarker()
+	}
+	readValueTable[byteBuffer] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readByteBuffer()
-	case tType, directionType, mergeType, gTypeType:
-		return d.readEnum(dt)
-	case compositePDTType:
+	}
+
+	// Enum group: each code gets its OWN closure so the dt->enum-constructor
+	// mapping inside readEnum stays correct per type.
+	readValueTable[tType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readEnum(tType)
+	}
+	readValueTable[directionType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readEnum(directionType)
+	}
+	readValueTable[mergeType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readEnum(mergeType)
+	}
+	readValueTable[gTypeType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+		return d.readEnum(gTypeType)
+	}
+
+	readValueTable[compositePDTType] = func(d *GraphBinaryDeserializer, _ byte) (interface{}, error) {
 		return d.readCompositePDT()
-	default:
+	}
+}
+
+// readValueErr0408Sentinel is set on the deserializer by readValueErr0408 so that
+// readValue can report the actual offending data-type code in the error (matching
+// the old switch default which returned dt, not a fixed code).
+//
+// readValueErr0408 is the shared reader installed for every unsupported /
+// upstream-handled data-type code (0x00, gaps, nullType 0xFE handled upstream).
+// It carries no code of its own; readValue rebuilds the error with the real dt.
+func readValueErr0408(_ *GraphBinaryDeserializer, _ byte) (interface{}, error) {
+	return nil, errReadValueUnknownTypeSentinel()
+}
+
+// errReadValueUnknownType is the sentinel returned by readValueErr0408. readValue
+// recognises it and substitutes an error carrying the real data-type code. It is
+// built lazily (not as a var initializer or in init()) because newError depends
+// on the package localizer, whose own init() ordering we must not rely on.
+var (
+	errReadValueUnknownType     error
+	errReadValueUnknownTypeOnce sync.Once
+)
+
+func errReadValueUnknownTypeSentinel() error {
+	errReadValueUnknownTypeOnce.Do(func() {
+		errReadValueUnknownType = newError(err0408GetSerializerToReadUnknownTypeError, dataType(0))
+	})
+	return errReadValueUnknownType
+}
+
+func (d *GraphBinaryDeserializer) readValue(dt dataType, flag byte) (interface{}, error) {
+	res, err := readValueTable[byte(dt)](d, flag)
+	if err != nil && err == errReadValueUnknownTypeSentinel() {
 		return nil, newError(err0408GetSerializerToReadUnknownTypeError, dt)
 	}
+	return res, err
+}
+
+func (d *GraphBinaryDeserializer) readDouble() (interface{}, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	if _, err := io.ReadFull(d.r, d.buf[:8]); err != nil {
+		d.err = err
+		return nil, err
+	}
+	return math.Float64frombits(binary.BigEndian.Uint64(d.buf[:8])), nil
+}
+
+func (d *GraphBinaryDeserializer) readFloat() (interface{}, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	if _, err := io.ReadFull(d.r, d.buf[:4]); err != nil {
+		d.err = err
+		return nil, err
+	}
+	return math.Float32frombits(binary.BigEndian.Uint32(d.buf[:4])), nil
+}
+
+func (d *GraphBinaryDeserializer) readBoolean() (interface{}, error) {
+	b, err := d.readByte()
+	return b != 0, err
+}
+
+func (d *GraphBinaryDeserializer) readShort() (interface{}, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	if _, err := io.ReadFull(d.r, d.buf[:2]); err != nil {
+		d.err = err
+		return nil, err
+	}
+	return int16(binary.BigEndian.Uint16(d.buf[:2])), nil
+}
+
+func (d *GraphBinaryDeserializer) readUUID() (interface{}, error) {
+	buf, err := d.readBytes(16)
+	if err != nil {
+		return nil, err
+	}
+	id, err := uuid.FromBytes(buf)
+	if err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+func (d *GraphBinaryDeserializer) readSet(bulked bool) (interface{}, error) {
+	list, err := d.readList(bulked)
+	if err != nil {
+		return nil, err
+	}
+	return NewSimpleSet(list.([]interface{})...), nil
+}
+
+func (d *GraphBinaryDeserializer) readMarker() (interface{}, error) {
+	b, err := d.readByte()
+	if err != nil {
+		return nil, err
+	}
+	return Of(b)
 }
 
 func (d *GraphBinaryDeserializer) readString() (string, error) {
