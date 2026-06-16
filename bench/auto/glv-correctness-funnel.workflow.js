@@ -72,6 +72,11 @@ const GLV_REGISTRY = {
     // (vs a seconds-long no-op false green). Injected into the gate prompt's STEP 1/STEP 3.
     suiteDesc: 'pytest integration (~347 tests, no-server unit + server-backed) AND the radish feature/gherkin suite, x3 serializer modes (graphbinary bulked / parameterized / plain)',
     suiteProof: 'a MINUTES-long build whose log shows the docker integration tests plus the radish feature run — typically ~163 features / ~2149 scenarios / ~9890 steps, printed once per mode (x3). A sub-10-second BUILD SUCCESS with no radish/pytest counts means the profile did NOT activate',
+    // The docker-compose build context (context: ../) mounts sibling target/ dirs (gremlin-test/target,
+    // gremlin-server, socket-server) that a FRESH worktree has NOT built. Without them the first
+    // `mvn clean install` fails fast on a missing docker build context — which LOOKS like a .glv no-op
+    // but is NOT. Build the upstream reactor deps inside the WORKTREE first (run from the worktree root).
+    prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
     sourceGlobs: 'gremlin_python/structure/io/graphbinaryV4.py, driver/serializer.py, driver/connection.py, driver/aiohttp/transport.py',
     testGlobs: 'tests/unit/structure/io/*, tests/unit/driver/test_http_streaming.py',
     profileSubdir: 'python-4.0',
@@ -120,6 +125,10 @@ INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     // zero .feature files; its only 'generate-radish-support' step is shared groovy data-gen, not a test run).
     suiteDesc: "the docker-compose Go integration suite: `docker compose up --build --exit-code-from gremlin-go-integration-tests` — go test against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
     suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server container becoming healthy, and the gremlin-go-integration-tests container running `go test` (PASS/ok lines, package timings) and exiting 0. There is NO radish output for Go — do NOT expect feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/go-test activity means the profile did NOT activate',
+    // Same as python: the gremlin-go docker-compose context (context: ../) needs sibling target/ dirs
+    // (gremlin-test/target etc.) that a FRESH worktree lacks; the first `mvn clean install` fails fast on
+    // the missing build context until they are built. Build the upstream reactor deps in the WORKTREE first.
+    prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
     sourceGlobs: 'gremlin-go/driver/ (GraphBinary reader/serializer, type deserialization, connection/result streaming)',
     testGlobs: 'gremlin-go/driver/*_test.go (GraphBinary + serializer unit tests)',
     profileSubdir: 'go-4.0',
@@ -502,23 +511,31 @@ STEP 0 — LOCATE THE CANDIDATE (do NOT skip; a wrong/missing tree makes the who
   branch name is correct. If you truly cannot find the candidate's code anywhere, set fullSuiteGreen=false,
   suiteRan=false, and explain in failTail — do NOT build the wrong tree.
 
-STEP 1 — ACTIVATE THE FULL SUITE (CRITICAL — without this, mvn is a NO-OP false green):
+STEP 1 — BUILD UPSTREAM PREREQUISITES (a fresh worktree needs these or the docker gate fails fast):
+  The ${G.module} docker-compose build context mounts sibling target/ artifacts (gremlin-test/target etc.)
+  that a fresh worktree has NOT built. Without them the FIRST 'mvn clean install' fails in seconds on a
+  missing docker build context — looks like a .glv no-op but is NOT. From the WORKTREE ROOT, build them once:
+    cd <worktree> && ${G.prereqBuild}
+  (Heavy but cached; only the first build in a fresh worktree pays it.) If this step itself fails, capture it
+  in failTail — it is an environment/setup failure, NOT a candidate code bug, so do NOT spend code-repair on it.
+
+STEP 2 — ACTIVATE THE FULL SUITE (CRITICAL — without this, mvn is a NO-OP false green):
   The ${G.module} integration suite (${G.suiteDesc}) lives in a maven profile activated ONLY by the
   presence of a gitignored marker file '${G.module}/.glv'. A fresh worktree does NOT have it, so a plain
   'mvn clean install' will BUILD SUCCESS in seconds while running ZERO integration tests. You MUST:
     cd <worktree>/${G.module} && touch .glv
   (it is gitignored, so it does not dirty the candidate diff).
 
-STEP 2 — RUN IT:
+STEP 3 — RUN IT:
   cd <worktree>/${G.module} && docker compose down || true   # clear any stale stack first
   mvn clean install -Dasciidoc.skip=true
 Run it in the BACKGROUND and POLL to completion (the build far exceeds the 10-min Bash cap — do NOT block
 a single call on it; poll with short status checks so progress is visible). Only one build runs at a time,
 so the fixed ports (45940/8182) are free.
 
-STEP 3 — PROVE THE SUITE ACTUALLY RAN (false-green guard): the proof for ${G.label} is: ${G.suiteProof}.
+STEP 4 — PROVE THE SUITE ACTUALLY RAN (false-green guard): the proof for ${G.label} is: ${G.suiteProof}.
 Set suiteRan=true ONLY if you saw that evidence (and capture the concrete test/feature counts in summary);
-otherwise set suiteRan=false, fullSuiteGreen=false and go back to STEP 1.
+otherwise set suiteRan=false, fullSuiteGreen=false and go back to STEP 2 (.glv) — or STEP 1 if the failure was a missing build context.
 
 CODE-REPAIR: if it fails on a CODE bug, you MAY fix YOUR OWN code (NEVER a test) and retry up to
 ${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGreen=true ONLY on a real BUILD
