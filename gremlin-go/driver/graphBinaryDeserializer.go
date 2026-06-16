@@ -341,12 +341,24 @@ func (d *GraphBinaryDeserializer) readMap() (interface{}, error) {
 		}
 		if key == nil {
 			m[nil] = val
-		} else if reflect.TypeOf(key).Comparable() {
+			continue
+		}
+		// Fast path: the concrete comparable types the decoder actually emits
+		// (see readValue/readEnum). These are assigned directly to avoid a
+		// reflect.TypeOf(key) call per entry. Enum named types (t, direction,
+		// merge, gType) are distinct from string and must be listed explicitly.
+		switch key.(type) {
+		case string, int32, int64, float64, float32, bool, byte, int16, uuid.UUID,
+			t, direction, merge, gType:
 			m[key] = val
-		} else if reflect.TypeOf(key).Kind() == reflect.Map {
-			m[&key] = val
-		} else {
-			m[fmt.Sprint(key)] = val
+		default:
+			if reflect.TypeOf(key).Comparable() {
+				m[key] = val
+			} else if reflect.TypeOf(key).Kind() == reflect.Map {
+				m[&key] = val
+			} else {
+				m[fmt.Sprint(key)] = val
+			}
 		}
 	}
 	return m, nil
