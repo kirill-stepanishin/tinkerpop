@@ -140,6 +140,35 @@ func (d *GraphBinaryDeserializer) readInt64() (int64, error) {
 	return int64(binary.BigEndian.Uint64(d.buf[:8])), nil
 }
 
+// ReadBulkCount reads a fully-qualified bulk count from the stream.
+//
+// In a bulked stream, each element is followed by its bulk count, which the
+// server always encodes as a fully-qualified long (type code 0x02, value flag,
+// then an 8-byte big-endian value). Rather than route this through
+// ReadFullyQualified -> readValue (paying the type-code dispatch, the type
+// switch, and an interface box that is immediately type-asserted back to
+// int64), this reads the known long layout directly off the buffered reader.
+//
+// A malformed bulk (any type code other than long, or a null value flag) is
+// rejected with an error, so behaviour matches the previous dispatch path.
+func (d *GraphBinaryDeserializer) ReadBulkCount() (int64, error) {
+	dtByte, err := d.readByte()
+	if err != nil {
+		return 0, err
+	}
+	if dataType(dtByte) != longType {
+		return 0, fmt.Errorf("expected long (0x%02x) bulk count, got type code 0x%02x", byte(longType), dtByte)
+	}
+	flag, err := d.readByte()
+	if err != nil {
+		return 0, err
+	}
+	if flag == valueFlagNull {
+		return 0, fmt.Errorf("expected non-null bulk count, got null long")
+	}
+	return d.readInt64()
+}
+
 // ReadHeader reads and validates the GraphBinary response header.
 // The header consists of a version byte and a bulking flag byte (0x00 = not bulked, 0x01 = bulked).
 // This must be called before reading any objects from the stream.
