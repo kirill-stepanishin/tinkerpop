@@ -110,24 +110,35 @@ Built on top of the harness, this strand discovers and validates **candidate
 optimizations** for one GLV's hot path (currently gremlin-python GraphBinary
 deserialization). Entry point: [`auto/RUNBOOK.md`](auto/RUNBOOK.md).
 
-Two autonomous funnels (Claude Code `Workflow` scripts) plus the manual EC2
-runbook and the analysis notebook:
+One autonomous funnel (a Claude Code `Workflow` script) **proposes** candidates;
+a companion gate **re-gates** recovered ones. Neither benchmarks — all
+measurement is the operator's manual EC2 job. The pieces:
 
-- `auto/glv-perf-funnel.workflow.js` — full pipeline: research → investigate →
-  implement → review → `mvn` correctness gate → **interleaved ABAB benchmark**
-  → adversarial verify. Gated on **yappi CPU self-time drop ≥ 5%**. Each
-  survivor lands on its own branch.
-- `auto/glv-correctness-funnel.workflow.js` — GLV-parameterized
-  (`{glv: "python"|"go"}`) variant that stops at `mvn clean install` (no
-  in-workflow benchmarking); the operator benchmarks the surviving branches
-  manually afterward.
+- `auto/glv-correctness-funnel.workflow.js` — the proposer. GLV-parameterized
+  (`{glv: "python"|"go"}`): research → investigate → implement (one agent per
+  candidate in its own worktree) → review → `mvn clean install` (unit +
+  integration + feature/radish) gate. It **stops at a green build** — no
+  in-workflow benchmarking or profiling. Each survivor lands on its own branch
+  `auto/cand-<glv>-<id>` (one clean commit, nothing merged/pushed), bucketed
+  into `passed` / `breaks-contract`. The operator benchmarks afterward.
+- `auto/glv-recovery-gate.workflow.js` — re-runs the full `mvn` gate for
+  candidates the funnel implemented but left ungated (a branch-naming bug),
+  plus any false-green. Strictly serial; its load-bearing fix is `touch
+  gremlin-python/.glv` so the integration+feature profile actually activates
+  (without it the build false-greens in seconds). Gate → Report only.
 - `auto/EC2-BENCHMARK-CANDIDATES.md` — fully-worked runbook for benchmarking
-  the four python deser candidates on EC2.
+  the current gremlin-python deser candidates on EC2.
 - `auto/EC2-BENCHMARK-CANDIDATES-TEMPLATE.md` — language-agnostic version of
   that runbook (fill-in-the-blanks for any GLV).
 - `auto/candidate-analysis.ipynb` — pandas/plotly notebook that reads
-  S3-published candidate results and renders the CPU gate, guards, and a
-  PASS/FAIL verdict.
+  S3-published candidate results and ranks arms by **medium wall-clock latency**
+  (the primary signal); an optional yappi CPU self-time cross-check is shown
+  only when profiles were published.
+
+> **The 3.7→4.0 perf funnel that once benchmarked in-workflow
+> (`glv-perf-funnel.workflow.js`) has been removed.** Benchmarking is no longer
+> done inside any workflow; the funnels hand you reviewed, test-passing branches
+> and you measure them on the rig below.
 
 ---
 
@@ -187,6 +198,16 @@ Leave it running in its own `tmux`/`screen` pane for the session. **.NET clients
 also require** `DOTNET_GCServer=1` and `DOTNET_ThreadPool_MinThreads=1024` for a
 fair run (the harness sets these per-cell, but set them in the shell for ad-hoc
 runs).
+
+> **Client-env gotcha (python).** If a cell fails at warmup with `no RESULT_JSON
+> line found in stdout`, read the real traceback in `<output-dir>/logs/`. One
+> known cause: the python profiling app passed `request_serializer=` into the
+> driver `Client(...)`, which has no such parameter — it fell through to
+> aiohttp's `post()` and raised `TypeError: ... unexpected keyword argument
+> 'request_serializer'` under aiohttp ≥ 3.13. The fix (drop the kwarg; the driver
+> already defaults to GraphBinary V4 both directions) is constant across arms, so
+> it doesn't bias a comparison — but it must be carried by the baseline **and**
+> every candidate arm.
 
 ### Interpreting the pool-sensitivity / scaling curves
 
