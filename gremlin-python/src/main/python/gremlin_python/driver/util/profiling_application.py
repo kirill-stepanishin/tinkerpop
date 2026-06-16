@@ -27,7 +27,6 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, wait
 
 from gremlin_python.driver.client import Client
-from gremlin_python.driver.serializer import GraphBinarySerializersV4
 
 SCRIPTS = [
     "g.V()",
@@ -65,8 +64,7 @@ class ProfilingApplication:
     def _create_client(self):
         return Client(self._url, "g",
                       pool_size=self._pool_size,
-                      max_workers=self._max_workers,
-                      request_serializer=GraphBinarySerializersV4())
+                      max_workers=self._max_workers)
 
     def _choose_script(self):
         # Exclude the last (most complex match) script, matching Java behavior
@@ -204,8 +202,7 @@ def main():
             print("--------------------------INITIALIZATION--------------------------")
             init_client = Client(url, "g",
                                  pool_size=args.pool_size,
-                                 max_workers=args.max_workers,
-                                 request_serializer=GraphBinarySerializersV4())
+                                 max_workers=args.max_workers)
             try:
                 init_client.submit("graph.clear()")
                 print("Cleared existing 'graph'")
