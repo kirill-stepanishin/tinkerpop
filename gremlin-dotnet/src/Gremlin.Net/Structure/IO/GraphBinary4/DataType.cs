@@ -71,6 +71,47 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// </summary>
         public static readonly DataType UnspecifiedNull = new DataType(0xFE);
 
+        // One-time lookup of the well-known singletons indexed by type code. This must be populated
+        // after the public static readonly fields above are initialized; placing the population in
+        // the static constructor (which runs after all field initializers, in textual order) guarantees
+        // that ordering. Genuinely unknown/unregistered codes are left null so FromTypeCode keeps
+        // allocating a fresh DataType for them, exactly as before.
+        private static readonly DataType?[] _byCode = new DataType?[256];
+
+        static DataType()
+        {
+            _byCode[Int.TypeCode] = Int;
+            _byCode[Long.TypeCode] = Long;
+            _byCode[String.TypeCode] = String;
+            _byCode[DateTime.TypeCode] = DateTime;
+            _byCode[Double.TypeCode] = Double;
+            _byCode[Float.TypeCode] = Float;
+            _byCode[List.TypeCode] = List;
+            _byCode[Map.TypeCode] = Map;
+            _byCode[Set.TypeCode] = Set;
+            _byCode[Uuid.TypeCode] = Uuid;
+            _byCode[Edge.TypeCode] = Edge;
+            _byCode[Path.TypeCode] = Path;
+            _byCode[Property.TypeCode] = Property;
+            _byCode[Graph.TypeCode] = Graph;
+            _byCode[Vertex.TypeCode] = Vertex;
+            _byCode[VertexProperty.TypeCode] = VertexProperty;
+            _byCode[Direction.TypeCode] = Direction;
+            _byCode[T.TypeCode] = T;
+            _byCode[BigDecimal.TypeCode] = BigDecimal;
+            _byCode[BigInteger.TypeCode] = BigInteger;
+            _byCode[Byte.TypeCode] = Byte;
+            _byCode[Binary.TypeCode] = Binary;
+            _byCode[Short.TypeCode] = Short;
+            _byCode[Boolean.TypeCode] = Boolean;
+            _byCode[Merge.TypeCode] = Merge;
+            _byCode[CompositePDT.TypeCode] = CompositePDT;
+            _byCode[Char.TypeCode] = Char;
+            _byCode[Duration.TypeCode] = Duration;
+            _byCode[Marker.TypeCode] = Marker;
+            _byCode[UnspecifiedNull.TypeCode] = UnspecifiedNull;
+        }
+
         private DataType(int code)
         {
             TypeCode = (byte) code;
@@ -86,7 +127,8 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// </summary>
         public static DataType FromTypeCode(int code)
         {
-            return new DataType(code);
+            var cached = (uint) code < 256 ? _byCode[code] : null;
+            return cached ?? new DataType(code);
         }
 
         /// <inheritdoc />
