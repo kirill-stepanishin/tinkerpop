@@ -21,6 +21,8 @@
 
 #endregion
 
+using System;
+using System.Buffers;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -69,19 +71,44 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4.Types
                 }
             }
 
-            byte[] bytes;
             if (byteLength == 1)
             {
-                bytes = new[] {firstByte};
-            }
-            else
-            {
-                bytes = new byte[byteLength];
-                bytes[0] = firstByte;
-                await stream.ReadAsync(bytes, 1, byteLength - 1, cancellationToken).ConfigureAwait(false);
+                // Single-byte (ASCII) fast path: decode directly from the stack with zero heap allocations.
+                return DecodeSingleByte(firstByte);
             }
 
-            return Encoding.UTF8.GetChars(bytes)[0];
+            // For the 2-4 byte path a stackalloc Span cannot live across the await (and ref/Span locals are
+            // disallowed in async methods on this language version), so rent a small buffer from the shared
+            // pool to read the continuation bytes asynchronously, then decode synchronously in a helper. This
+            // keeps async socket I/O while still removing the per-char char[] allocation.
+            var buf = ArrayPool<byte>.Shared.Rent(4);
+            try
+            {
+                buf[0] = firstByte;
+                await stream.ReadExactlyAsync(buf.AsMemory(1, byteLength - 1), cancellationToken)
+                    .ConfigureAwait(false);
+                return Decode(buf, byteLength);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buf);
+            }
+        }
+
+        private static char DecodeSingleByte(byte value)
+        {
+            Span<byte> one = stackalloc byte[1];
+            one[0] = value;
+            Span<char> destChar = stackalloc char[2];
+            Encoding.UTF8.GetChars(one, destChar);
+            return destChar[0];
+        }
+
+        private static char Decode(byte[] bytes, int byteLength)
+        {
+            Span<char> destChar = stackalloc char[2];
+            Encoding.UTF8.GetChars(bytes.AsSpan(0, byteLength), destChar);
+            return destChar[0];
         }
     }
 }
