@@ -102,10 +102,25 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
                 {DataType.CompositePDT, new CompositePDTSerializer()},
             };
 
+        // Flat jump table indexed by the raw type-code byte. It is a pure projection of
+        // _serializerByDataType (slot[dataType.TypeCode] = serializer), so every entry —
+        // including CompositePDT (0xF0) and Marker (0xFD) — resolves identically to the
+        // dictionary, with no duplication of the registration list. Lets the hot read path
+        // dispatch on the raw byte without allocating a DataType or probing the dictionary.
+        private readonly ITypeSerializer?[] _serializerByCode = new ITypeSerializer?[256];
+
         /// <summary>
         /// Provides a default <see cref="TypeSerializerRegistry"/> instance.
         /// </summary>
         public static readonly TypeSerializerRegistry Instance = new TypeSerializerRegistry();
+
+        private TypeSerializerRegistry()
+        {
+            foreach (var kv in _serializerByDataType)
+            {
+                _serializerByCode[kv.Key.TypeCode] = kv.Value;
+            }
+        }
 
         /// <summary>
         /// Gets a serializer for the given type of the value to be serialized.
@@ -184,6 +199,23 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         public ITypeSerializer GetSerializerFor(DataType dataType)
         {
             return _serializerByDataType[dataType];
+        }
+
+        /// <summary>
+        /// Gets a serializer for the given GraphBinary 4.0 raw type-code byte.
+        /// </summary>
+        /// <param name="code">The GraphBinary 4.0 type-code byte.</param>
+        /// <returns>A serializer for the provided type code.</returns>
+        /// <exception cref="KeyNotFoundException">Thrown when no serializer is registered for the type code.</exception>
+        internal ITypeSerializer GetSerializerForCode(byte code)
+        {
+            var serializer = _serializerByCode[code];
+            if (serializer == null)
+            {
+                throw new KeyNotFoundException($"No serializer found for type code 0x{code:X2}.");
+            }
+
+            return serializer;
         }
 
         private static bool IsDictionaryType(Type type, [NotNullWhen(returnValue: true)] out Type? keyType,

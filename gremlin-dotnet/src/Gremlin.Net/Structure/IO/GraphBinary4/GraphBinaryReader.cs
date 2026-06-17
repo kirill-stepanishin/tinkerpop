@@ -85,15 +85,15 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <returns>The read value.</returns>
         public async Task<object?> ReadAsync(Stream stream, CancellationToken cancellationToken = default)
         {
-            var type = DataType.FromTypeCode(await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false));
+            var code = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
 
-            if (type == DataType.UnspecifiedNull)
+            if (code == 0xFE) // UnspecifiedNull
             {
                 await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false); // read value byte to advance the index
                 return null;
             }
 
-            var typeSerializer = _registry.GetSerializerFor(type);
+            var typeSerializer = _registry.GetSerializerForCode(code);
             var result = await typeSerializer.ReadAsync(stream, this, cancellationToken).ConfigureAwait(false);
             if (result is ProviderDefinedType pdt)
             {
