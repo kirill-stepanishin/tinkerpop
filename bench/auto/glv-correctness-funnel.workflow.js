@@ -157,6 +157,69 @@ ideas (aenum, struct lambdas) — they do not exist here.`,
     },
     highCeilingNote: 'The high-ceiling lane for Go is unsafe/asm/encoding-binary tricks; it is gated like any other Go change (compiles + go test + mvn), no separate build-proof needed since Go is already compiled.',
   },
+
+  dotnet: {
+    label: 'gremlin-dotnet',
+    module: 'gremlin-dotnet',                                  // reactor parent (submodules src + test); holds docker-compose.yml + the mvn gate
+    sourceSubdir: 'gremlin-dotnet/src/Gremlin.Net',            // where the deser source lives; the worktree edits stay here
+    // .NET worktrees build from their own csproj/sln, so building/testing from the worktree is naturally
+    // isolated — no env trick needed (like Go). The CHEAP pre-filter is the server-FREE unit project only:
+    // Gremlin.Net.UnitTest covers GraphBinary de/serialization round-trips with MemoryStream and needs no
+    // server. Do NOT add Gremlin.Net.IntegrationTest here — it is server-dependent and would fail with no
+    // server up. `dotnet test` restores+builds the referenced Gremlin.Net project, so this also catches a
+    // compile break. Full integration/feature coverage runs in the mvn gate.
+    // DOTNET_ROLL_FORWARD=LatestMajor is REQUIRED: the projects target net8.0 but this box ships only the
+    // .NET 10 runtime, so the xUnit test HOST (net8.0) refuses to launch without roll-forward ("You must
+    // install or update .NET to run this application"). Build alone succeeds; the test RUN needs this var.
+    unitTest: () => `cd <worktree>/gremlin-dotnet && ` +
+      `DOTNET_ROLL_FORWARD=LatestMajor dotnet test test/Gremlin.Net.UnitTest/Gremlin.Net.UnitTest.csproj -c Release`,
+    unitToolDesc: 'dotnet test (Gremlin.Net.UnitTest, server-free; DOTNET_ROLL_FORWARD=LatestMajor for net8.0-on-net10)',
+    // .NET's .glv profile runs a docker-compose `dotnet test ./Gremlin.Net.sln` integration suite. It DOES
+    // include a Gherkin feature runner, but it is xUnit/TRX-framed (NOT radish) — so expect xUnit PASS lines
+    // and a "Passed!" summary, not radish feature/scenario/step counts.
+    suiteDesc: "the docker-compose .NET integration suite: `docker compose up --build --exit-code-from gremlin-dotnet-integration-tests` — `dotnet test ./Gremlin.Net.sln -c Release` (xUnit unit + integration incl. the Gherkin feature runner) plus the three Examples projects, against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
+    suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server-test-dotnet container becoming healthy, and the gremlin-dotnet-integration-tests container running `dotnet test ./Gremlin.Net.sln` (xUnit PASS lines incl. Gherkin scenarios and a "Passed!" summary) followed by the three Examples projects, exiting 0. The framing is xUnit/TRX, NOT radish — do NOT expect radish feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/dotnet-test activity means the profile did NOT activate',
+    // Same sibling-target/ context-mount trap as python/go: the gremlin-dotnet docker-compose contexts
+    // (context: ../) mount gremlin-test/gremlin-socket-server target artifacts a FRESH worktree has NOT built.
+    prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
+    sourceGlobs: 'gremlin-dotnet/src/Gremlin.Net/Structure/IO/GraphBinary4/ (GraphBinaryReader.cs entry/dispatch, TypeSerializerRegistry.cs DataType->serializer lookup, Types/*Serializer.cs per-type readers, StreamExtensions.cs primitive byte reads, ResponseSerializer.cs ReadStreamingAsync decode loop), Driver/Connection.cs + Driver/ResultSet.cs (Channel delivery)',
+    testGlobs: 'gremlin-dotnet/test/Gremlin.Net.UnitTest/Structure/IO/GraphBinary4/*.cs (GraphBinary round-trip + serializer unit tests)',
+    profileSubdir: 'dotnet-4.0',
+    profileHint:
+`Files: README.md (a WRITTEN end-to-end analysis — read this FIRST; it already ranks the decode tower and the
+allocation/GC breakdown with file:line targets), plus 40-cpu-clean.speedscope.json / .nettrace (PRIMARY CPU
+profile; Sandwich view = self-time, call-tree = decode tower), 40-cpu-benchfaithful.* (server-GC env),
+40-counters-5exec.csv / 40-counters-1exec.csv (allocation + GC time series), 40-bdn.txt (BenchmarkDotNet).
+IMPORTANT: macOS EventPipe thread-time sampling counts thread-pool spin/park (Monitor.Enter_Slowpath,
+LowLevelSpinWaiter.Wait, LowLevelLifoSemaphore.Wait) and GC-poll (Thread.PollGCWorker ~23%) as on-CPU
+self-time — DISCOUNT those as scheduling/idle artifacts; rank decode work by the CUMULATIVE tower
+(ResponseSerializer.ReadStreamingAsync -> GraphBinaryReader.ReadAsync, ~30% inclusive) and by ALLOCATIONS,
+not by that spin/park self-time. ALSO: BenchmarkDotNet TestReadSmallBinary/TestReadBigBinary already FAIL
+(stale May-5 TestMessages fixtures, pre-existing, OUT OF SCOPE) — do not treat that as a regression.`,
+    seed:
+`There is NO Python-style aenum/struct hotspot list for .NET. From the stored profile: the path is
+DECODE-BOUND but the cost is the async-per-primitive + per-element ALLOCATION design, not serializer
+arithmetic (the serializer methods carry negligible self-time). ~333 MB allocated per request (~1.66 KB per
+result element); GC-poll and thread-pool spin/park dominate the visible on-CPU time. Concrete .NET fix
+targets (verify by reading source): per-primitive byte[] allocation in StreamExtensions.ReadByteAsync
+(new byte[1] per call) and the per-read buffer allocations; per-element DataType boxing/lookup in
+TypeSerializerRegistry.GetSerializerFor; List<string> label allocation in VertexSerializer; and COARSENING
+the async-per-read granularity (buffer a span then decode synchronously) to cut the millions of thin
+await/MoveNext continuations bouncing across thread-pool threads. Idiomatic levers: Span<byte>/stackalloc
+for fixed-width reads, ArrayPool buffers, BinaryPrimitives, struct readers, fewer interface-dispatch hops in
+the type switch. Do NOT carry over Python (aenum, struct lambdas) or Go-specific ideas — they do not exist here.`,
+    invariants: {
+      hard: [
+        'incremental streaming: ResponseSerializer.ReadStreamingAsync must keep yielding each result object as decoded into the Channel (no buffering the whole response before delivery)',
+        'bounded memory: no whole-response/whole-body materialization in a single buffer for large results',
+      ],
+      soft: [
+        'public-api: exported types/signatures of GraphBinaryReader/GraphBinaryWriter, ITypeSerializer, DataType (type-code identity), and IMessageSerializer unchanged',
+        'custom-serializer: the ProviderDefinedType registry (ProviderDefinedTypeRegistry) and any custom type-handler extension point intact',
+      ],
+    },
+    highCeilingNote: 'The high-ceiling lane for .NET is unsafe/Span/stackalloc/ArrayPool and aggressive async-removal on the innermost decode loop; it is gated like any other change (dotnet test + mvn), no separate build-proof needed since .NET is already compiled.',
+  },
 }
 
 // ---- normalize args -----------------------------------------------------------
@@ -292,6 +355,8 @@ Confirm the toolchain needed to (a) run unit tests and (b) run 'mvn clean instal
 for ${G.module}:
 ${GLV === 'python'
   ? `- ${VENV_PY} runs and can import the package + pytest (unit tool: ${G.unitToolDesc}).`
+  : GLV === 'dotnet'
+  ? `- 'dotnet' (SDK) and 'mvn' are on PATH; 'dotnet test' runs the Gremlin.Net.UnitTest project (unit tool: ${G.unitToolDesc}).`
   : `- 'go' and 'mvn' are on PATH; 'go vet'/'go test' run in ${G.module} (unit tool: ${G.unitToolDesc}).`}
 - docker is available (the mvn gate is docker-compose orchestrated).
 - the working tree at ${REPO} is committed enough that worktrees can fork from ${BASE} (treeClean).
@@ -350,23 +415,34 @@ judge ideas on plausibility + correctness + invariant-safety, and for each give 
 // =================================================================================
 // PHASE 1 — RESEARCH. Wide, diverse-lens generation (breadth is cheap here).
 phase('Research')
-const LENSES = A.lenses || (GLV === 'python'
-  ? [
-      'small, low-risk tweaks (bound-method hoisting, cheaper int unpack via int.from_bytes for integers only, local caching)',
-      'enum/type-code dispatch (aenum DataType construction + __hash__; int-keyed dispatch cache)',
-      'the read/buffer path (struct lambda elimination, is_null cost) WITHOUT breaking streaming',
-      'result object construction (Vertex/VertexProperty/Path: __slots__, fewer attribute writes)',
-      'large structural refactor of the reader (per-type codegen, flatter dispatch, fewer Python frames)',
-      'high-ceiling: C-extension / Cython acceleration of the innermost decode loop',
-    ]
-  : [
-      'allocation reduction (preallocate slices/maps by known length, reuse buffers, avoid string([]byte) copies)',
-      'decode dispatch (the type switch / interface dispatch in the GraphBinary reader)',
-      'byte handling (encoding/binary vs manual math, bufio/read sizing) WITHOUT breaking streaming',
-      'result construction & channel delivery (fewer allocations per element, GC pressure)',
-      'large structural refactor of the reader (flatter dispatch, generated per-type decoders)',
-      'high-ceiling: unsafe / encoding-binary / asm tricks on the innermost decode loop',
-    ])
+const LENSES_BY_GLV = {
+  python: [
+    'small, low-risk tweaks (bound-method hoisting, cheaper int unpack via int.from_bytes for integers only, local caching)',
+    'enum/type-code dispatch (aenum DataType construction + __hash__; int-keyed dispatch cache)',
+    'the read/buffer path (struct lambda elimination, is_null cost) WITHOUT breaking streaming',
+    'result object construction (Vertex/VertexProperty/Path: __slots__, fewer attribute writes)',
+    'large structural refactor of the reader (per-type codegen, flatter dispatch, fewer Python frames)',
+    'high-ceiling: C-extension / Cython acceleration of the innermost decode loop',
+  ],
+  go: [
+    'allocation reduction (preallocate slices/maps by known length, reuse buffers, avoid string([]byte) copies)',
+    'decode dispatch (the type switch / interface dispatch in the GraphBinary reader)',
+    'byte handling (encoding/binary vs manual math, bufio/read sizing) WITHOUT breaking streaming',
+    'result construction & channel delivery (fewer allocations per element, GC pressure)',
+    'large structural refactor of the reader (flatter dispatch, generated per-type decoders)',
+    'high-ceiling: unsafe / encoding-binary / asm tricks on the innermost decode loop',
+  ],
+  dotnet: [
+    'allocation reduction (kill per-primitive byte[] allocs in StreamExtensions, ArrayPool/reused buffers, fewer List<string> label allocs)',
+    'async granularity coarsening (buffer a span then decode fixed-width primitives SYNCHRONOUSLY to cut the millions of await/MoveNext continuations) WITHOUT breaking streaming',
+    'decode dispatch (per-element DataType boxing/lookup in TypeSerializerRegistry.GetSerializerFor; flatter type dispatch)',
+    'byte handling (Span<byte>/stackalloc, BinaryPrimitives vs manual math, BufferedStream sizing)',
+    'result construction & Channel delivery (fewer allocations per element, GC/gen0 pressure)',
+    'large structural refactor of the reader (flatter dispatch, struct/generated per-type decoders)',
+    'high-ceiling: unsafe / Span / stackalloc tricks + aggressive async removal on the innermost decode loop',
+  ],
+}
+const LENSES = (A.lenses || LENSES_BY_GLV[GLV] || LENSES_BY_GLV.python)
   .filter(l => ALLOW_HIGH_CEILING || !/high-ceiling/i.test(l))
 
 const lensFindings = await parallel(LENSES.map((lens, i) => () => agent(
@@ -521,10 +597,14 @@ STEP 1 — BUILD UPSTREAM PREREQUISITES (a fresh worktree needs these or the doc
 
 STEP 2 — ACTIVATE THE FULL SUITE (CRITICAL — without this, mvn is a NO-OP false green):
   The ${G.module} integration suite (${G.suiteDesc}) lives in a maven profile activated ONLY by the
-  presence of a gitignored marker file '${G.module}/.glv'. A fresh worktree does NOT have it, so a plain
+  presence of (a) gitignored marker file(s). A fresh worktree does NOT have ${GLV === 'dotnet' ? 'them' : 'it'}, so a plain
   'mvn clean install' will BUILD SUCCESS in seconds while running ZERO integration tests. You MUST:
-    cd <worktree>/${G.module} && touch .glv
-  (it is gitignored, so it does not dirty the candidate diff).
+${GLV === 'dotnet'
+    ? `    cd <worktree>/gremlin-dotnet && touch src/.glv test/.glv
+  (CRITICAL: .NET needs BOTH markers — gremlin-dotnet/src/.glv AND gremlin-dotnet/test/.glv. Touching only
+  one leaves the suite a no-op false green. Both are gitignored, so they do not dirty the candidate diff.)`
+    : `    cd <worktree>/${G.module} && touch .glv
+  (it is gitignored, so it does not dirty the candidate diff).`}
 
 STEP 3 — RUN IT:
   cd <worktree>/${G.module} && docker compose down || true   # clear any stale stack first
