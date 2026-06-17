@@ -77,35 +77,44 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4.Types
         protected override async Task<Guid> ReadValueAsync(Stream stream, GraphBinaryReader reader,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[16];
+            // Read all 16 bytes in a single buffered async read (one array, one ReadExactlyAsync)
+            // instead of 16 sequential awaited ReadByteAsync calls (each allocating a byte[1]).
+            var raw = await stream.ReadAsync(16, cancellationToken).ConfigureAwait(false);
+
+            // The byte permutation uses a stackalloc Span<byte>; that lives entirely in the
+            // synchronous helper below, since a Span<byte> cannot cross an await (and a ref/span
+            // local is not even permitted in an async method body under C# 12).
+            return ToGuid(raw);
+        }
+
+        private static Guid ToGuid(byte[] raw)
+        {
+            // Apply the same explicit byte permutation as the writer, synchronously, into a
+            // stack-allocated span.
+            Span<byte> guidBytes = stackalloc byte[16];
 
             // first 4 bytes in reverse order:
-            bytes[3] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[2] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[1] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[0] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            
+            guidBytes[3] = raw[0];
+            guidBytes[2] = raw[1];
+            guidBytes[1] = raw[2];
+            guidBytes[0] = raw[3];
+
             // 2 bytes in reverse order:
-            bytes[5] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[4] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            
+            guidBytes[5] = raw[4];
+            guidBytes[4] = raw[5];
+
             // 2 bytes in reverse order:
-            bytes[7] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[6] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            
+            guidBytes[7] = raw[6];
+            guidBytes[6] = raw[7];
+
             // 2 bytes:
-            bytes[8] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[9] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            
+            guidBytes[8] = raw[8];
+            guidBytes[9] = raw[9];
+
             // last 6 bytes:
-            bytes[10] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[11] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[12] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[13] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[14] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            bytes[15] = await stream.ReadByteAsync(cancellationToken).ConfigureAwait(false);
-            
-            return new Guid(bytes);
+            raw.AsSpan(10, 6).CopyTo(guidBytes[10..]);
+
+            return new Guid(guidBytes);
         }
     }
 }
