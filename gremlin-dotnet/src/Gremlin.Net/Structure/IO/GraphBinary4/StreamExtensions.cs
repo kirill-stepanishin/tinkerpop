@@ -110,12 +110,12 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="int"/>.</returns>
-        public static async ValueTask<int> ReadIntAsync(this Stream stream,
+        public static ValueTask<int> ReadIntAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[4];
-            await stream.ReadExactlyAsync(bytes, 0, 4, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadInt32BigEndian(bytes);
+            Span<byte> bytes = stackalloc byte[4];
+            stream.ReadExactly(bytes);
+            return new ValueTask<int>(BinaryPrimitives.ReadInt32BigEndian(bytes));
         }
 
         /// <summary>
@@ -138,12 +138,12 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="long"/>.</returns>
-        public static async ValueTask<long> ReadLongAsync(this Stream stream,
+        public static ValueTask<long> ReadLongAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[8];
-            await stream.ReadExactlyAsync(bytes, 0, 8, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadInt64BigEndian(bytes);
+            Span<byte> bytes = stackalloc byte[8];
+            stream.ReadExactly(bytes);
+            return new ValueTask<long>(BinaryPrimitives.ReadInt64BigEndian(bytes));
         }
 
         /// <summary>
@@ -166,12 +166,12 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="float"/>.</returns>
-        public static async ValueTask<float> ReadFloatAsync(this Stream stream,
+        public static ValueTask<float> ReadFloatAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[4];
-            await stream.ReadExactlyAsync(bytes, 0, 4, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadSingleBigEndian(bytes);
+            Span<byte> bytes = stackalloc byte[4];
+            stream.ReadExactly(bytes);
+            return new ValueTask<float>(BinaryPrimitives.ReadSingleBigEndian(bytes));
         }
 
         /// <summary>
@@ -194,12 +194,12 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="double"/>.</returns>
-        public static async ValueTask<double> ReadDoubleAsync(this Stream stream,
+        public static ValueTask<double> ReadDoubleAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[8];
-            await stream.ReadExactlyAsync(bytes, 0, 8, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadDoubleBigEndian(bytes);
+            Span<byte> bytes = stackalloc byte[8];
+            stream.ReadExactly(bytes);
+            return new ValueTask<double>(BinaryPrimitives.ReadDoubleBigEndian(bytes));
         }
 
         /// <summary>
@@ -222,12 +222,12 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="short"/>.</returns>
-        public static async ValueTask<short> ReadShortAsync(this Stream stream,
+        public static ValueTask<short> ReadShortAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[2];
-            await stream.ReadExactlyAsync(bytes, 0, 2, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadInt16BigEndian(bytes);
+            Span<byte> bytes = stackalloc byte[2];
+            stream.ReadExactly(bytes);
+            return new ValueTask<short>(BinaryPrimitives.ReadInt16BigEndian(bytes));
         }
 
         /// <summary>
