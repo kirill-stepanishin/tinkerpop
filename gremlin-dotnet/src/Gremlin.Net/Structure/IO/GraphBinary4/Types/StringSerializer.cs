@@ -21,6 +21,8 @@
 
 #endregion
 
+using System;
+using System.Buffers;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -54,9 +56,26 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4.Types
             CancellationToken cancellationToken = default)
         {
             var length = (int)await reader.ReadNonNullableValueAsync<int>(stream, cancellationToken).ConfigureAwait(false);
-            var bytes = new byte[length];
-            await stream.ReadAsync(bytes, 0, length, cancellationToken).ConfigureAwait(false);
-            return Encoding.UTF8.GetString(bytes);
+            if (length == 0)
+            {
+                return string.Empty;
+            }
+
+            // Rent a scratch buffer instead of allocating a dedicated byte[] per value: this avoids a
+            // per-string heap allocation while staying strictly bounded to a single value (never the
+            // whole response). A Span/stackalloc buffer cannot live across the awaits below in this
+            // async method, so the pool is used for every length. ReadExactlyAsync guarantees the full
+            // payload is read, fixing the latent partial-read truncation of the previous ReadAsync.
+            var rented = ArrayPool<byte>.Shared.Rent(length);
+            try
+            {
+                await stream.ReadExactlyAsync(rented.AsMemory(0, length), cancellationToken).ConfigureAwait(false);
+                return Encoding.UTF8.GetString(rented.AsSpan(0, length));
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
     }
 }
