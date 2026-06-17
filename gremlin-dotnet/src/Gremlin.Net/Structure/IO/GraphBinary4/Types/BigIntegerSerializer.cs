@@ -21,6 +21,7 @@
 
 #endregion
 
+using System;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -56,7 +57,7 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4.Types
         {
             var length = (int)await reader.ReadNonNullableValueAsync<int>(stream, cancellationToken).ConfigureAwait(false);
             var bytes = await stream.ReadAsync(length, cancellationToken).ConfigureAwait(false);
-            return new BigInteger(bytes.Reverse().ToArray());
+            return new BigInteger(new ReadOnlySpan<byte>(bytes), isUnsigned: false, isBigEndian: true);
         }
     }
 }
