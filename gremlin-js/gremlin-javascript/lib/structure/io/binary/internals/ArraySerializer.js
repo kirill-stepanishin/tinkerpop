@@ -86,8 +86,8 @@ export default class ArraySerializer {
       const value = await this.ioc.anySerializer.deserialize(reader);
 
       if (isBulked) {
-        const bulkCount = await reader.readBigInt64BE();
-        for (let j = 0n; j < bulkCount; j++) {
+        const bulkCount = await reader.readSafeInt64();
+        for (let j = 0; j < bulkCount; j++) {
           v.push(value);
         }
       } else {

@@ -180,6 +180,31 @@ export default class StreamReader {
   }
 
   /**
+   * Read a signed 64-bit big-endian integer, returning a JS Number when the value
+   * fits in the safe-integer range (avoiding a BigInt allocation), and a BigInt otherwise.
+   *
+   * The signed high word + unsigned low word combination reproduces Number(readBigInt64BE())
+   * exactly for all in-range values, including negatives (e.g. -1 => -1*2^32 + 4294967295 = -1).
+   *
+   * @returns {Promise<number|bigint>} signed 64-bit big-endian integer
+   */
+  async readSafeInt64() {
+    await this.#ensure(8);
+    const hi = this.#buffer.readInt32BE(this.#offset); // signed high word
+    const lo = this.#buffer.readUInt32BE(this.#offset + 4); // unsigned low word
+    const n = hi * 0x100000000 + lo;
+    if (Number.isSafeInteger(n)) {
+      this.#offset += 8;
+      this.#position += 8;
+      return n;
+    }
+    const v = this.#buffer.readBigInt64BE(this.#offset);
+    this.#offset += 8;
+    this.#position += 8;
+    return v;
+  }
+
+  /**
    * @returns {Promise<number>} 32-bit big-endian float
    */
   async readFloatBE() {

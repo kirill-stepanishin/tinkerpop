@@ -84,7 +84,7 @@ export default class SetSerializer {
 
       if (isBulked) {
         // consume the bulk count; Set.add is idempotent so count doesn't matter
-        await reader.readBigInt64BE();
+        await reader.readSafeInt64();
       }
 
       v.add(value);

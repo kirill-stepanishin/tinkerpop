@@ -53,6 +53,18 @@ export default class LongSerializer {
   }
 
   /**
+   * Read a bare long value from the StreamReader (no type_code or value_flag).
+   * Preserves the public value contract: a Number when in the safe-integer range,
+   * a BigInt otherwise (Number.isSafeInteger(n) is equivalent to the
+   * MIN_SAFE..MAX_SAFE range check used by deserializeValue).
+   * @param {StreamReader} reader
+   * @returns {Promise<number|bigint>}
+   */
+  async deserializeBare(reader) {
+    return await reader.readSafeInt64();
+  }
+
+  /**
    * @param {StreamReader} reader
    * @param {number} valueFlag - already consumed by AnySerializer
    * @param {number} typeCode
@@ -84,5 +96,29 @@ export default class LongSerializer {
       throw new Error(`LongSerializer: unexpected {value_flag}=0x${value_flag.toString(16)}`);
     }
     return this.deserializeValue(reader, value_flag, type_code);
+  }
+
+  /**
+   * Read a fully-qualified long from the StreamReader, validating the FQ header
+   * (type_code + value_flag) but reading the value via the safe-int path
+   * (deserializeBare) to avoid an intermediate BigInt allocation when in range.
+   * Used for the never-null bulk-count Long on the response stream; preserves
+   * the FQ corruption guard (the 2 header reads) and the public value contract.
+   * @param {StreamReader} reader
+   * @returns {Promise<number|bigint|null>}
+   */
+  async deserializeFQBare(reader) {
+    const type_code = await reader.readUInt8();
+    if (type_code !== this.ioc.DataType.LONG) {
+      throw new Error(`LongSerializer: unexpected {type_code}=0x${type_code.toString(16)}`);
+    }
+    const value_flag = await reader.readUInt8();
+    if (value_flag === 0x01) {
+      return null;
+    }
+    if (value_flag !== 0x00) {
+      throw new Error(`LongSerializer: unexpected {value_flag}=0x${value_flag.toString(16)}`);
+    }
+    return this.deserializeBare(reader);
   }
 }

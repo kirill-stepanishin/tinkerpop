@@ -102,7 +102,7 @@ export default class GraphBinaryReader {
       }
 
       if (bulked) {
-        const bulk = await this.ioc.longSerializer.deserialize(reader);
+        const bulk = await this.ioc.longSerializer.deserializeFQBare(reader);
         yield new Traverser(value, Number(bulk));
       } else {
         yield value;
@@ -151,7 +151,7 @@ export default class GraphBinaryReader {
       }
 
       if (bulked) {
-        const bulk = await this.ioc.longSerializer.deserialize(reader);
+        const bulk = await this.ioc.longSerializer.deserializeFQBare(reader);
         data.push({ v: value, bulk: Number(bulk) });
       } else {
         data.push(value);
