@@ -14,7 +14,7 @@ There are two scripts, and they play different roles:
 
 | Script | Role | Goes as far as |
 |--------|------|----------------|
-| [`glv-correctness-funnel.workflow.js`](glv-correctness-funnel.workflow.js) | **the proposer** — researches, implements, reviews, and gates brand-new candidates (python **and** go) | a green `mvn clean install` (unit + integration + feature/radish) |
+| [`glv-correctness-funnel.workflow.js`](glv-correctness-funnel.workflow.js) | **the proposer** — researches, implements, reviews, and gates brand-new candidates (python, go, dotnet **and** javascript) | a green `mvn clean install` (unit + integration + feature/radish) |
 | [`glv-recovery-gate.workflow.js`](glv-recovery-gate.workflow.js) | **a repair tool** — re-runs the full mvn gate for candidates that were already implemented + reviewed but never properly gated | a green `mvn clean install` for a fixed work-list of branches |
 
 Both are **discovery + validation** pipelines. They implement (or re-gate) each
@@ -38,8 +38,8 @@ in [`candidate-analysis.ipynb`](candidate-analysis.ipynb).
 ```
 Are you proposing NEW candidates, or repairing an existing batch?
 │
-├─ Propose NEW optimizations (python OR go), end-to-end through the mvn gate
-│  └─►  glv-correctness-funnel   (args: { glv: "python" }  or  { glv: "go" })
+├─ Propose NEW optimizations (python / go / dotnet / javascript), end-to-end through the mvn gate
+│  └─►  glv-correctness-funnel   (args: { glv: "python" } | { glv: "go" } | { glv: "dotnet" } | { glv: "javascript" })
 │
 └─ Re-gate a specific set of ALREADY-implemented branches that never got a
    real mvn gate (a branch-naming bug left them ungated, plus one false-green)
@@ -66,7 +66,7 @@ resumable). They are **not** plain node scripts — they use the workflow harnes
 ```js
 // Correctness funnel (default glv=python)
 Workflow({ scriptPath: ".../bench/auto/glv-correctness-funnel.workflow.js",
-           args: { glv: "python" } })          // or { glv: "go" }
+           args: { glv: "python" } })          // or { glv: "go" }, { glv: "dotnet" }, { glv: "javascript" }
 
 // Recovery gate (fixed work-list; no args needed)
 Workflow({ scriptPath: ".../bench/auto/glv-recovery-gate.workflow.js" })
@@ -85,7 +85,7 @@ All knobs have defaults; override via the `args` object.
 
 | Arg | Default | Meaning |
 |-----|---------|---------|
-| `glv` | `python` | `python` or `go` — the `GLV_REGISTRY` key that selects every GLV-specific detail |
+| `glv` | `python` | `python`, `go`, `dotnet`, or `javascript` — the `GLV_REGISTRY` key that selects every GLV-specific detail |
 | `repo` | `/Users/kiristep/dev/tinkerpop` | repo root |
 | `base` | `4-glv-profiling` | branch candidates fork from |
 | `python` | `/Users/kiristep/venv-glv-4/bin/python` | interpreter for the python-lane unit gate |
@@ -106,8 +106,9 @@ The recovery gate takes **no args** — its repo, base (`de50057c9e`), module
 
 ### `glv-correctness-funnel` (7 phases)
 
-1. **Setup** — light, fail-fast. Confirms the toolchain (python+pytest, or
-   go+mvn) and that the tree is committed enough to fork worktrees from `base`.
+1. **Setup** — light, fail-fast. Confirms the toolchain (python+pytest, go+mvn,
+   dotnet+mvn, or node+npm+mvn) and that the tree is committed enough to fork
+   worktrees from `base`.
    **No server, no baseline.** It *also* reads the stored profiling results at
    `PROFILE_DIR` (when `profileRoot` is set) and distills a **ranked hotspot
    digest** that seeds Research; this profile read is **non-blocking** (a
@@ -177,6 +178,19 @@ the suite actually ran** before trusting the result:
   gremlin-server becoming healthy, and the gremlin-go integration container
   running `go test` and exiting 0. There is **no** radish output for Go — do not
   expect feature/scenario counts.
+- dotnet: needs **both** markers (`gremlin-dotnet/src/.glv` **and**
+  `gremlin-dotnet/test/.glv`); the suite is xUnit/TRX-framed (Gherkin runner
+  included) — expect `Passed!` summaries plus the three Examples projects, not
+  radish counts.
+- javascript: **the exception — there is no `.glv` marker.** The `glv-js` docker
+  profile is `activeByDefault=true`, so a plain `mvn clean install` already runs
+  the suite; the false-green here is a **`-DskipTests` / `-Dmaven.test.skip`
+  flag**, which no-ops the integration exec. The gate runs *without* any skip
+  flag and proves the run by a minutes-long build whose log shows the
+  `gremlin-js-integration-tests` container do `npm ci`, the mocha unit+integration
+  passing counts, the cucumber-js feature run, and the three node examples
+  printing `All examples completed successfully`. Framing is mocha + cucumber-js,
+  not radish.
 
 Catching that false green is part of why the recovery gate exists at all (one of
 its work-list entries is a prior false-green being re-gated for real).
@@ -253,13 +267,17 @@ and `--label` discipline (`candidate-eval` for these runs).
 - **Resumability** — both scripts are background + resumable; relaunch with
   `Workflow({ scriptPath, resumeFromRunId })` to reuse the unchanged prefix.
 - **Strictly serial gate** — the mvn correctness gate is one build at a time by
-  design (Docker, fixed ports `45940`/`8182`). Never run two builds at once; the
-  fixed ports must be free.
+  design (Docker, fixed host ports — `45940`-`45943`/`4588` for the GLV docker
+  suites, `8182` elsewhere). Never run two builds at once; the fixed ports must
+  be free.
 - **Worktree isolation** — every candidate lives in its own git worktree; the
   branch name `auto/cand-<glv>-<id>` (correctness funnel) is load-bearing because
   the gate and finalizer find candidates strictly by it. A fresh worktree must
-  build the upstream reactor prereqs once and `touch .glv` before the gate, or
-  the build fails fast / false-greens.
+  build the upstream reactor prereqs once and **activate the suite** before the
+  gate (`touch .glv` for python/go, `touch src/.glv test/.glv` for dotnet — but
+  **javascript has no marker**: just don't pass a skip flag, and `npm ci` at the
+  `gremlin-js` workspace root for the unit gate), or the build fails fast /
+  false-greens.
 - **Tests are sacred** — `touchedTests = true` auto-rejects a candidate at every
   stage.
 

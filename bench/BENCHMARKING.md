@@ -115,12 +115,15 @@ a companion gate **re-gates** recovered ones. Neither benchmarks — all
 measurement is the operator's manual EC2 job. The pieces:
 
 - `auto/glv-correctness-funnel.workflow.js` — the proposer. GLV-parameterized
-  (`{glv: "python"|"go"}`): research → investigate → implement (one agent per
-  candidate in its own worktree) → review → `mvn clean install` (unit +
-  integration + feature/radish) gate. It **stops at a green build** — no
-  in-workflow benchmarking or profiling. Each survivor lands on its own branch
-  `auto/cand-<glv>-<id>` (one clean commit, nothing merged/pushed), bucketed
-  into `passed` / `breaks-contract`. The operator benchmarks afterward.
+  (`{glv: "python"|"go"|"dotnet"|"javascript"}`): research → investigate →
+  implement (one agent per candidate in its own worktree) → review → `mvn clean
+  install` (unit + integration + feature/radish) gate. It **stops at a green
+  build** — no in-workflow benchmarking or profiling. Each survivor lands on its
+  own branch `auto/cand-<glv>-<id>` (one clean commit, nothing merged/pushed),
+  bucketed into `passed` / `breaks-contract`. The operator benchmarks afterward.
+  (Suite activation differs per GLV: a gitignored `.glv` marker for
+  python/go/dotnet, but **javascript has no marker** — its docker profile is
+  `activeByDefault=true`, so the only false-green risk is a `-DskipTests` flag.)
 - `auto/glv-recovery-gate.workflow.js` — re-runs the full `mvn` gate for
   candidates the funnel implemented but left ungated (a branch-naming bug),
   plus any false-green. Strictly serial; its load-bearing fix is `touch
@@ -128,6 +131,9 @@ measurement is the operator's manual EC2 job. The pieces:
   (without it the build false-greens in seconds). Gate → Report only.
 - `auto/EC2-BENCHMARK-CANDIDATES.md` — fully-worked runbook for benchmarking
   the current gremlin-python deser candidates on EC2.
+- `auto/EC2-BENCHMARK-CANDIDATES-DOTNET.md` — fully-worked runbook for the
+  gremlin-dotnet GraphBinary4 candidates (9 contract-clean arms; baseline
+  `bench-baseline-dotnet`; note the per-arm `dotnet build` rebuild step).
 - `auto/EC2-BENCHMARK-CANDIDATES-TEMPLATE.md` — language-agnostic version of
   that runbook (fill-in-the-blanks for any GLV).
 - `auto/candidate-analysis.ipynb` — pandas/plotly notebook that reads

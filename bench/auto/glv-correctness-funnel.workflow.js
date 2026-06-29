@@ -9,7 +9,7 @@
  *
  *  Run with the Claude Code `Workflow` tool (background + resumable):
  *    Workflow({ scriptPath: ".../bench/auto/glv-correctness-funnel.workflow.js",
- *               args: { glv: "python" } })          // or { glv: "go" }
+ *               args: { glv: "python" } })          // or { glv: "go" }, { glv: "dotnet" }, { glv: "javascript" }
  *
  *  SCOPE (deliberate): this pipeline goes ONLY as far as a green `mvn clean install`
  *  (unit + integration + feature/radish). It does NOT benchmark or profile — the
@@ -72,6 +72,9 @@ const GLV_REGISTRY = {
     // (vs a seconds-long no-op false green). Injected into the gate prompt's STEP 1/STEP 3.
     suiteDesc: 'pytest integration (~347 tests, no-server unit + server-backed) AND the radish feature/gherkin suite, x3 serializer modes (graphbinary bulked / parameterized / plain)',
     suiteProof: 'a MINUTES-long build whose log shows the docker integration tests plus the radish feature run — typically ~163 features / ~2149 scenarios / ~9890 steps, printed once per mode (x3). A sub-10-second BUILD SUCCESS with no radish/pytest counts means the profile did NOT activate',
+    // How to make the integration suite actually run before `mvn clean install` (false-green guard). For
+    // python/go/dotnet the suite lives behind a gitignored .glv marker a fresh worktree lacks; touch it.
+    suiteActivation: 'cd <worktree>/gremlin-python && touch .glv  (it is gitignored, so it does not dirty the candidate diff)',
     // The docker-compose build context (context: ../) mounts sibling target/ dirs (gremlin-test/target,
     // gremlin-server, socket-server) that a FRESH worktree has NOT built. Without them the first
     // `mvn clean install` fails fast on a missing docker build context — which LOOKS like a .glv no-op
@@ -125,6 +128,7 @@ INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     // zero .feature files; its only 'generate-radish-support' step is shared groovy data-gen, not a test run).
     suiteDesc: "the docker-compose Go integration suite: `docker compose up --build --exit-code-from gremlin-go-integration-tests` — go test against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
     suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server container becoming healthy, and the gremlin-go-integration-tests container running `go test` (PASS/ok lines, package timings) and exiting 0. There is NO radish output for Go — do NOT expect feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/go-test activity means the profile did NOT activate',
+    suiteActivation: 'cd <worktree>/gremlin-go && touch .glv  (it is gitignored, so it does not dirty the candidate diff)',
     // Same as python: the gremlin-go docker-compose context (context: ../) needs sibling target/ dirs
     // (gremlin-test/target etc.) that a FRESH worktree lacks; the first `mvn clean install` fails fast on
     // the missing build context until they are built. Build the upstream reactor deps in the WORKTREE first.
@@ -179,6 +183,7 @@ ideas (aenum, struct lambdas) — they do not exist here.`,
     // and a "Passed!" summary, not radish feature/scenario/step counts.
     suiteDesc: "the docker-compose .NET integration suite: `docker compose up --build --exit-code-from gremlin-dotnet-integration-tests` — `dotnet test ./Gremlin.Net.sln -c Release` (xUnit unit + integration incl. the Gherkin feature runner) plus the three Examples projects, against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
     suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server-test-dotnet container becoming healthy, and the gremlin-dotnet-integration-tests container running `dotnet test ./Gremlin.Net.sln` (xUnit PASS lines incl. Gherkin scenarios and a "Passed!" summary) followed by the three Examples projects, exiting 0. The framing is xUnit/TRX, NOT radish — do NOT expect radish feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/dotnet-test activity means the profile did NOT activate',
+    suiteActivation: 'cd <worktree>/gremlin-dotnet && touch src/.glv test/.glv  (CRITICAL: .NET needs BOTH markers — gremlin-dotnet/src/.glv AND gremlin-dotnet/test/.glv. Touching only one leaves the suite a no-op false green. Both are gitignored, so they do not dirty the candidate diff.)',
     // Same sibling-target/ context-mount trap as python/go: the gremlin-dotnet docker-compose contexts
     // (context: ../) mount gremlin-test/gremlin-socket-server target artifacts a FRESH worktree has NOT built.
     prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
@@ -219,6 +224,85 @@ the type switch. Do NOT carry over Python (aenum, struct lambdas) or Go-specific
       ],
     },
     highCeilingNote: 'The high-ceiling lane for .NET is unsafe/Span/stackalloc/ArrayPool and aggressive async-removal on the innermost decode loop; it is gated like any other change (dotnet test + mvn), no separate build-proof needed since .NET is already compiled.',
+  },
+
+  javascript: {
+    label: 'gremlin-javascript',
+    module: 'gremlin-js/gremlin-javascript',                    // dir holding pom.xml + docker-compose.yml for the mvn gate
+    // Source of truth is the git-tracked lib/ tree (NOT src/ — src holds only bin scripts). The driver layer
+    // is .ts (connection.ts, result-set.ts); the GraphBinary deser hot path is plain .js under
+    // lib/structure/io/binary/internals/. The worktree edits stay under lib/.
+    sourceSubdir: 'gremlin-js/gremlin-javascript/lib',
+    // gremlin-javascript is an npm WORKSPACE: node_modules is hoisted to the gremlin-js/ ROOT, so a FRESH
+    // worktree must `npm ci` at that root before any test can run. mocha+ts-node runs the suites directly
+    // against lib/ (no build/transpile step needed for the unit gate). The cheap pre-filter is the
+    // server-FREE GraphBinary suites only: test/unit/graphbinary/** (GraphBinaryReader/Writer + per-type
+    // round-trips + StreamReader, all against MemoryStream-equivalent buffers, no server) plus the
+    // server-free result-set/structure/graph-serializer unit tests. Do NOT add connection-test/client-test/
+    // traversal-test/auth-test here — they construct a Client/Connection and would hit a server that is not
+    // up. Full integration + cucumber feature coverage runs in the mvn (docker) gate. <worktree> is the
+    // worktree's repo root; npm ci runs at <worktree>/gremlin-js (the workspace root), the suite one level deeper.
+    unitTest: () => `cd <worktree>/gremlin-js && npm ci && cd <worktree>/gremlin-js/gremlin-javascript && ` +
+      `npx cross-env TS_NODE_PROJECT='tsconfig.test.json' mocha 'test/unit/graphbinary/**/*.{js,ts}' ` +
+      `test/unit/result-set-test.js test/unit/structure-types-test.js test/unit/graph-serializer-test.js`,
+    unitToolDesc: 'mocha+ts-node (server-free GraphBinary + result-set/structure unit suites; npm ci first because node_modules is workspace-hoisted)',
+    // IMPORTANT GLV DIVERGENCE: gremlin-javascript has NO gitignored .glv marker. Its docker integration
+    // profile (glv-js, pom.xml) is activeByDefault=true, so a plain `mvn clean install` ALREADY runs the
+    // docker-compose suite. The false-green trap here is NOT a missing marker but the `skipTests` flag:
+    // `-DskipTests`/`-Dmaven.test.skip=true` makes the integration exec a no-op. So the gate must run WITHOUT
+    // any skip flag and PROVE the docker suite ran (see suiteProof). The container command is:
+    //   `npm ci && npm run test && npm run features-docker` + the three node examples.
+    suiteDesc: "the docker-compose JS integration suite: `docker compose up --build --exit-code-from gremlin-js-integration-tests` — inside the node container `npm ci && npm run test` (mocha unit + graphbinary integration) then `npm run features-docker` (cucumber-js feature/gherkin suite) then the three examples/node scripts, against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
+    suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server-test-js container becoming healthy, and the gremlin-js-integration-tests container running `npm ci`, the mocha unit+integration passing counts, the cucumber-js feature run (scenario/step counts), and the three node examples printing "All examples completed successfully", exiting 0. The framing is mocha + cucumber-js, NOT radish. A sub-10-second BUILD SUCCESS with no docker/npm activity means the integration exec was skipped (skipTests) — do NOT pass any -DskipTests / -Dmaven.test.skip flag',
+    // GLV DIVERGENCE: there is NO .glv marker for JS — the glv-js docker profile is activeByDefault=true, so
+    // a plain `mvn clean install` already runs the integration suite. The ONLY way to no-op it is a skip flag,
+    // so "activation" is the absence of any skip flag (NOT a touch). Nothing to create.
+    suiteActivation: 'NOTHING TO TOUCH — gremlin-javascript has no .glv marker; the docker integration profile (glv-js) is activeByDefault=true, so `mvn clean install` runs it automatically. Your job is the OPPOSITE: do NOT pass -DskipTests or -Dmaven.test.skip=true (either makes the integration exec a no-op false green). Run a plain `mvn clean install -Dasciidoc.skip=true`.',
+    // Same sibling-target/ context-mount trap as python/go/dotnet: the docker-compose build contexts
+    // (context: ../../) mount gremlin-test/target + gremlin-socket-server target artifacts a FRESH worktree
+    // has NOT built. Build the upstream reactor deps in the WORKTREE first (run from the worktree root).
+    prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
+    sourceGlobs: 'gremlin-js/gremlin-javascript/lib/structure/io/binary/internals/ (StreamReader.js async-per-read primitive reads, AnySerializer.js per-element type dispatch (2x readUInt8), GraphBinaryReader.js readResponseStream decode loop + per-type *Serializer.js readers, DataType.js type-code map), lib/driver/connection.ts (stream() incremental path vs submit()/#handleResponse buffered path) + lib/driver/result-set.ts',
+    testGlobs: 'gremlin-js/gremlin-javascript/test/unit/graphbinary/*.{js,ts} (GraphBinary round-trip + StreamReader unit tests), test/unit/result-set-test.js',
+    profileSubdir: 'javascript-4.0',
+    profileHint:
+`Files: README.md (a WRITTEN end-to-end analysis — read this FIRST; it ranks the decode tower + microtask
+breakdown with file:line targets), plus 40.cpuprofile (raw V8 CPU profile; open at speedscope.app — Sandwich
+= self-time, call-tree = decode tower), 40-cpu.svg (flamegraph), 40-cpu.txt (full self-time + cumulative
+ranking + phase rollup), 40-run.txt (run log). The profile is SINGLE-THREADED (serialize + the whole decode
+run on the main event loop), so the main-thread sampler is COMPLETE — no decode-worker blind spot. IMPORTANT:
+the top self-time entry is \`(idle)\` ~39% = main-thread off-CPU wait for the server to compute+stream the
+buffered response — DISCOUNT it as server/receive wait, not driver work. Rank driver work by self-time AFTER
+idle: decode (StreamReader + serializers) ~27% of the window and promise/microtask scheduling
+(processTicksAndRejections) ~15% are the two real client costs.`,
+    seed:
+`There is NO Python aenum / Go slice / .NET Span hotspot list for JS. From the stored profile the path is
+DECODE-bound on the MAIN EVENT LOOP and the dominant structural cost is the ASYNC-PER-BYTE StreamReader
+design: every primitive read (StreamReader.readUInt8 ~4.4%, readInt32BE, readBytes, #ensure ~2.3%) returns a
+Promise even though the whole response body is ALREADY buffered in memory, so per-element decode fragments
+into thousands of microtasks — processTicksAndRejections (promise/microtask drain) is ~15% of the window, the
+#2 client cost after decode itself. Concrete JS fix targets (verify by reading source):
+(1) buffer-and-decode SYNCHRONOUSLY in StreamReader — when the body is fully in memory, the per-primitive
+reads need not be async; cutting the await/microtask churn is the single biggest named lever;
+(2) AnySerializer.deserialize per-element type dispatch does 2x readUInt8 — coarsen to one read / a flatter
+type-code dispatch (DataType.js map lookup per element);
+(3) ArraySerializer.deserializeValue (id + label List<String>) and the element constructors
+(Vertex/VertexProperty) allocation. Idiomatic JS levers: avoid Promise allocation on the hot path, Buffer
+readUInt8/readInt32BE direct offsets vs a stateful reader, fewer Buffer.toString calls, reuse decode buffers.
+HARD CONSTRAINT: connection.ts stream()/readResponseStream is the genuinely-incremental path and MUST keep
+streaming; the buffered submit()/#handleResponse path may stay buffered (that is its contract) but do NOT
+make it the ONLY path. Do NOT carry over Python (aenum, struct lambdas), Go (slices), or .NET (Span) ideas.`,
+    invariants: {
+      hard: [
+        'incremental streaming: connection.ts stream() -> GraphBinaryReader.readResponseStream must keep yielding each result object as decoded from the StreamReader (no buffering the whole response before delivery); the separate buffered submit()/#handleResponse path may stay buffered but must not become the only path',
+        'bounded memory: no NEW whole-response materialization on the streaming path (do not collect all decoded elements into one array before yielding)',
+      ],
+      soft: [
+        'public-api: exported types/signatures of GraphBinaryReader/GraphBinaryWriter, the per-type Serializer interface (serialize/deserialize/deserializeValue), DataType type-code identity, and ResultSet unchanged',
+        'custom-serializer: the provider-defined-type registry (CompositePDTSerializer / pdtRegistry) and any custom type-handler extension point intact',
+      ],
+    },
+    highCeilingNote: 'The high-ceiling lane for JS is full removal of async on the innermost decode loop (a synchronous decoder over the already-buffered body) and direct Buffer-offset reads bypassing the stateful StreamReader; it is gated like any other change (mocha + mvn docker suite), no separate build-proof needed since JS needs no compile step for the unit gate.',
   },
 }
 
@@ -321,7 +405,7 @@ const REVIEW = {
 const MVN = {
   type: 'object', required: ['id', 'fullSuiteGreen', 'suiteRan', 'summary'], properties: {
     id: { type: 'string' }, fullSuiteGreen: { type: 'boolean' },
-    suiteRan: { type: 'boolean', description: 'true ONLY if the .glv-activated integration suite ACTUALLY executed (a minutes-long build with real test evidence per the GLV proof: radish feature/scenario counts for python, the docker go-test integration container for go). A sub-10s BUILD SUCCESS means the .glv profile did not activate => false. fullSuiteGreen with suiteRan=false is a false green and is dropped.' },
+    suiteRan: { type: 'boolean', description: 'true ONLY if the gated integration suite ACTUALLY executed (a minutes-long build with real test evidence per the GLV proof: radish feature/scenario counts for python, the docker go-test integration container for go, xUnit/Gherkin for dotnet, mocha+cucumber-js for javascript). A sub-10s BUILD SUCCESS means the suite did not activate (a missing .glv marker for python/go/dotnet, or a skipTests flag for javascript) => false. fullSuiteGreen with suiteRan=false is a false green and is dropped.' },
     integrationGreen: { type: 'boolean' }, featureGreen: { type: 'boolean' },
     repairedAtMvn: { type: 'boolean', description: 'true if code (never a test) changed to pass => triggers re-review' },
     failTail: { type: 'string' }, summary: { type: 'string' },
@@ -357,6 +441,8 @@ ${GLV === 'python'
   ? `- ${VENV_PY} runs and can import the package + pytest (unit tool: ${G.unitToolDesc}).`
   : GLV === 'dotnet'
   ? `- 'dotnet' (SDK) and 'mvn' are on PATH; 'dotnet test' runs the Gremlin.Net.UnitTest project (unit tool: ${G.unitToolDesc}).`
+  : GLV === 'javascript'
+  ? `- 'node' (>=22), 'npm' and 'mvn' are on PATH; from the gremlin-js workspace root 'npm ci' then mocha runs the server-free GraphBinary unit suites (unit tool: ${G.unitToolDesc}). node_modules is workspace-hoisted to gremlin-js/, so a fresh worktree installs there.`
   : `- 'go' and 'mvn' are on PATH; 'go vet'/'go test' run in ${G.module} (unit tool: ${G.unitToolDesc}).`}
 - docker is available (the mvn gate is docker-compose orchestrated).
 - the working tree at ${REPO} is committed enough that worktrees can fork from ${BASE} (treeClean).
@@ -440,6 +526,15 @@ const LENSES_BY_GLV = {
     'result construction & Channel delivery (fewer allocations per element, GC/gen0 pressure)',
     'large structural refactor of the reader (flatter dispatch, struct/generated per-type decoders)',
     'high-ceiling: unsafe / Span / stackalloc tricks + aggressive async removal on the innermost decode loop',
+  ],
+  javascript: [
+    'async granularity: buffer-and-decode SYNCHRONOUSLY in StreamReader so per-primitive reads stop returning Promises (cut the processTicksAndRejections ~15% microtask churn) WITHOUT breaking the streaming path',
+    'decode dispatch (AnySerializer.deserialize per-element 2x readUInt8 -> one read / flatter DataType type-code dispatch)',
+    'byte handling (direct Buffer.readUInt8/readInt32BE at offsets vs the stateful StreamReader, fewer StreamReader.#ensure calls, fewer Buffer.toString)',
+    'result construction & allocation (Vertex/VertexProperty/Path + ArraySerializer id/label List<String>: fewer allocations and intermediate objects per element)',
+    'small, low-risk tweaks (bound-method/local hoisting, avoid Promise allocation on the hot path, cache per-type serializer lookups)',
+    'large structural refactor of the reader (flatter dispatch, generated/inlined per-type decoders, a synchronous decode core over the already-buffered body)',
+    'high-ceiling: full async removal on the innermost decode loop (synchronous decoder over the buffered body) + direct Buffer-offset reads bypassing the stateful StreamReader',
   ],
 }
 const LENSES = (A.lenses || LENSES_BY_GLV[GLV] || LENSES_BY_GLV.python)
@@ -590,39 +685,33 @@ STEP 0 — LOCATE THE CANDIDATE (do NOT skip; a wrong/missing tree makes the who
 STEP 1 — BUILD UPSTREAM PREREQUISITES (a fresh worktree needs these or the docker gate fails fast):
   The ${G.module} docker-compose build context mounts sibling target/ artifacts (gremlin-test/target etc.)
   that a fresh worktree has NOT built. Without them the FIRST 'mvn clean install' fails in seconds on a
-  missing docker build context — looks like a .glv no-op but is NOT. From the WORKTREE ROOT, build them once:
+  missing docker build context — looks like a suite no-op but is NOT. From the WORKTREE ROOT, build them once:
     cd <worktree> && ${G.prereqBuild}
   (Heavy but cached; only the first build in a fresh worktree pays it.) If this step itself fails, capture it
   in failTail — it is an environment/setup failure, NOT a candidate code bug, so do NOT spend code-repair on it.
 
-STEP 2 — ACTIVATE THE FULL SUITE (CRITICAL — without this, mvn is a NO-OP false green):
-  The ${G.module} integration suite (${G.suiteDesc}) lives in a maven profile activated ONLY by the
-  presence of (a) gitignored marker file(s). A fresh worktree does NOT have ${GLV === 'dotnet' ? 'them' : 'it'}, so a plain
-  'mvn clean install' will BUILD SUCCESS in seconds while running ZERO integration tests. You MUST:
-${GLV === 'dotnet'
-    ? `    cd <worktree>/gremlin-dotnet && touch src/.glv test/.glv
-  (CRITICAL: .NET needs BOTH markers — gremlin-dotnet/src/.glv AND gremlin-dotnet/test/.glv. Touching only
-  one leaves the suite a no-op false green. Both are gitignored, so they do not dirty the candidate diff.)`
-    : `    cd <worktree>/${G.module} && touch .glv
-  (it is gitignored, so it does not dirty the candidate diff).`}
+STEP 2 — ENSURE THE FULL SUITE WILL RUN (CRITICAL — otherwise mvn is a NO-OP false green):
+  The ${G.module} integration suite (${G.suiteDesc}) is gated. If it does not run, 'mvn clean install' will
+  BUILD SUCCESS in seconds while executing ZERO integration tests. For ${G.label} the activation is:
+    ${G.suiteActivation}
 
 STEP 3 — RUN IT:
   cd <worktree>/${G.module} && docker compose down || true   # clear any stale stack first
   mvn clean install -Dasciidoc.skip=true
 Run it in the BACKGROUND and POLL to completion (the build far exceeds the 10-min Bash cap — do NOT block
 a single call on it; poll with short status checks so progress is visible). Only one build runs at a time,
-so the fixed ports (45940/8182) are free.
+so the fixed docker host ports the suite binds (e.g. 45940-45943 / 4588 / 8182, per GLV) are free.
 
 STEP 4 — PROVE THE SUITE ACTUALLY RAN (false-green guard): the proof for ${G.label} is: ${G.suiteProof}.
 Set suiteRan=true ONLY if you saw that evidence (and capture the concrete test/feature counts in summary);
-otherwise set suiteRan=false, fullSuiteGreen=false and go back to STEP 2 (.glv) — or STEP 1 if the failure was a missing build context.
+otherwise set suiteRan=false, fullSuiteGreen=false and go back to STEP 2 (suite activation) — or STEP 1 if the failure was a missing build context.
 
 CODE-REPAIR: if it fails on a CODE bug, you MAY fix YOUR OWN code (NEVER a test) and retry up to
 ${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGreen=true ONLY on a real BUILD
 SUCCESS with suiteRan=true. On failure capture the failing test/section in failTail. Return ONLY the object.`,
     { phase: 'Correctness', label: `mvn:${c.id}`, schema: MVN, model: 'opus' })
   if (m && m.fullSuiteGreen && m.suiteRan === false) {
-    log(`DROP ${c.id}: mvn gate reported green but suiteRan=false (.glv no-op false-green) — ${m.summary}`); continue
+    log(`DROP ${c.id}: mvn gate reported green but suiteRan=false (suite-not-activated false-green) — ${m.summary}`); continue
   }
   if (!m || !m.fullSuiteGreen) { log(`DROP ${c.id}: mvn gate — ${m && m.summary}`); continue }
   if (m.repairedAtMvn) {
