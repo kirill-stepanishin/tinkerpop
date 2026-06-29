@@ -87,8 +87,16 @@ export default class ArraySerializer {
 
       if (isBulked) {
         const bulkCount = await reader.readBigInt64BE();
-        for (let j = 0n; j < bulkCount; j++) {
-          v.push(value);
+        if (bulkCount <= Number.MAX_SAFE_INTEGER) {
+          const n = Number(bulkCount);
+          for (let j = 0; j < n; j++) {
+            v.push(value);
+          }
+        } else {
+          // overflow fallback (physically unreachable: would OOM long before 2^53 refs)
+          for (let j = 0n; j < bulkCount; j++) {
+            v.push(value);
+          }
         }
       } else {
         v.push(value);
