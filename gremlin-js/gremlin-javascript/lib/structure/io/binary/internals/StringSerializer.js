@@ -21,7 +21,7 @@
  * @author Igor Ostapenko
  */
 
-import { Buffer } from 'buffer';
+import { Buffer, isAscii } from 'buffer';
 
 export default class StringSerializer {
   constructor(ioc, ID) {
@@ -69,7 +69,7 @@ export default class StringSerializer {
       return '';
     }
     const bytes = await reader.readBytes(length);
-    return bytes.toString('utf8');
+    return isAscii(bytes) ? bytes.toString('latin1') : bytes.toString('utf8');
   }
 
   /**
