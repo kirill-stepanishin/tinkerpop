@@ -18,6 +18,7 @@
  */
 
 import { Buffer } from 'buffer';
+import DataType from './DataType.js';
 
 /**
  * Async byte reader that provides a uniform interface over both a complete Buffer
@@ -135,6 +136,22 @@ export default class StreamReader {
     await this.#ensure(1);
     this.#position++;
     return this.#buffer[this.#offset++];
+  }
+
+  /**
+   * Consume a fully-qualified null marker (e.g. the always-null {parent} field of
+   * Edge/VertexProperty) by reading its 2 marker bytes directly, instead of dispatching
+   * through the full AnySerializer (position-capture + serializers[] lookup + value_flag
+   * branch + try/catch + postDeserialize). Validates the bytes and throws on anything
+   * unexpected so a future non-null value is never silently mis-parsed.
+   * @returns {Promise<void>}
+   */
+  async skipNull() {
+    const tc = await this.readUInt8();
+    const vf = await this.readUInt8();
+    if (tc !== DataType.UNSPECIFIED_NULL || vf !== 0x01) {
+      throw new Error(`expected fully-qualified null (parent), got 0x${tc.toString(16)} 0x${vf.toString(16)}`);
+    }
   }
 
   /**

@@ -119,7 +119,7 @@ export default class EdgeSerializer {
     const outVLabel = Array.isArray(outVLabelList) && outVLabelList.length > 0 ? outVLabelList[0] : outVLabelList;
 
     // {parent} fully qualified (always null in current TinkerPop)
-    await this.ioc.anySerializer.deserialize(reader);
+    await reader.skipNull();
 
     // {properties} fully qualified
     const properties = await this.ioc.anySerializer.deserialize(reader);

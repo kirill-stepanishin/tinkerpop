@@ -91,7 +91,7 @@ export default class VertexPropertySerializer {
     const value = await this.ioc.anySerializer.deserialize(reader);
 
     // {parent} fully qualified (always null in current TinkerPop)
-    await this.ioc.anySerializer.deserialize(reader);
+    await reader.skipNull();
 
     // {properties} fully qualified
     const properties = await this.ioc.anySerializer.deserialize(reader);
