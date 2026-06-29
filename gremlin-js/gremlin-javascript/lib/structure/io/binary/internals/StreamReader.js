@@ -158,6 +158,33 @@ export default class StreamReader {
   }
 
   /**
+   * Read a length-prefixed string in a single call: an int32 length followed by
+   * `length` UTF-8 (or `encoding`) bytes. Fuses the IntSerializer length read and
+   * the string-bytes read while preserving the original two-stage ensure behavior
+   * (ensure 4 -> read length -> validate -> ensure length -> decode), so chunk-split
+   * streaming and truncation error positions stay byte-for-byte identical.
+   * @param {BufferEncoding} [encoding='utf8']
+   * @returns {Promise<string>}
+   */
+  async readLengthPrefixedString(encoding = 'utf8') {
+    await this.#ensure(4);
+    const length = this.#buffer.readInt32BE(this.#offset);
+    this.#offset += 4;
+    this.#position += 4;
+    if (length < 0) {
+      throw new Error(`StringSerializer: {length}=${length} is less than zero`);
+    }
+    if (length === 0) {
+      return '';
+    }
+    await this.#ensure(length);
+    const s = this.#buffer.toString(encoding, this.#offset, this.#offset + length);
+    this.#offset += length;
+    this.#position += length;
+    return s;
+  }
+
+  /**
    * @returns {Promise<number>} signed 32-bit big-endian integer
    */
   async readInt32BE() {
