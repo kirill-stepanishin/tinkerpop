@@ -80,11 +80,14 @@ export default class AnySerializer {
     }
 
     const value_flag = await reader.readUInt8();
-    if (value_flag === 0x01) {
-      return null;
-    }
-    if (value_flag !== 0x00 && value_flag !== 0x02) {
-      throw new Error(`AnySerializer: unexpected {value_flag}=0x${value_flag.toString(16)} at position ${pos}`);
+    switch (value_flag) {
+      case 0x01:
+        return null;
+      case 0x00:
+      case 0x02:
+        break;
+      default:
+        throw new Error(`AnySerializer: unexpected {value_flag}=0x${value_flag.toString(16)} at position ${pos}`);
     }
 
     let result;
