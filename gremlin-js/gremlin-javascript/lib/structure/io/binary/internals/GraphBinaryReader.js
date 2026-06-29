@@ -22,7 +22,7 @@
  */
 
 import { Buffer } from 'buffer';
-import StreamReader from './StreamReader.js';
+import SyncBufferReader from './SyncBufferReader.js';
 import { END_OF_STREAM } from './MarkerSerializer.js';
 import { Traverser } from '../../../../process/traversal.js';
 import ResponseError from '../../../../driver/response-error.js';
@@ -64,7 +64,7 @@ export default class GraphBinaryReader {
       throw new Error('Buffer is empty.');
     }
 
-    const reader = StreamReader.fromBuffer(buffer);
+    const reader = SyncBufferReader.fromBuffer(buffer);
     reader.pdtRegistry = this.pdtRegistry;
     return await this.#readFromReader(reader);
   }
