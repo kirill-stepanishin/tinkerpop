@@ -68,8 +68,7 @@ export default class StringSerializer {
     if (length === 0) {
       return '';
     }
-    const bytes = await reader.readBytes(length);
-    return bytes.toString('utf8');
+    return reader.readString(length);
   }
 
   /**

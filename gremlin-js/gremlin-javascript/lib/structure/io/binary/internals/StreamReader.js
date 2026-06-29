@@ -129,6 +129,22 @@ export default class StreamReader {
   }
 
   /**
+   * Read exactly `n` bytes and decode them directly to a string, avoiding the
+   * intermediate subarray view that readBytes allocates. Uses the same #ensure
+   * so chunk-spanning strings reassemble identically.
+   * @param {number} n
+   * @param {string} encoding
+   * @returns {Promise<string>}
+   */
+  async readString(n, encoding = 'utf8') {
+    await this.#ensure(n);
+    const v = this.#buffer.toString(encoding, this.#offset, this.#offset + n);
+    this.#offset += n;
+    this.#position += n;
+    return v;
+  }
+
+  /**
    * @returns {Promise<number>} unsigned 8-bit integer
    */
   async readUInt8() {
