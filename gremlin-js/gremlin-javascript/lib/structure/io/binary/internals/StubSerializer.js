@@ -29,4 +29,14 @@ export default class StubSerializer {
   async deserializeValue(reader, valueFlag, typeCode) {
     throw new Error(`${this.typeName} deserialization is not yet implemented`);
   }
+
+  /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    throw new Error(`${this.typeName} deserialization is not yet implemented`);
+  }
 }

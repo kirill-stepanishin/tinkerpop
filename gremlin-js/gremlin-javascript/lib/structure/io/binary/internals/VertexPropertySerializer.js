@@ -100,6 +100,33 @@ export default class VertexPropertySerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {VertexProperty}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    // {id} fully qualified
+    const id = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {label} bare list, extract first element
+    const labelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+    const label = Array.isArray(labelList) && labelList.length > 0 ? labelList[0] : labelList;
+
+    // {value} fully qualified
+    const value = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {parent} fully qualified (always null in current TinkerPop)
+    this.ioc.anySerializer.deserializeSync(reader);
+
+    // {properties} fully qualified
+    const properties = this.ioc.anySerializer.deserializeSync(reader);
+
+    return new VertexProperty(id, label, value, properties || []);
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<VertexProperty|null>}

@@ -83,6 +83,28 @@ export default class UuidSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {string}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const bytes = reader.readBytesSync(16);
+    return (
+      bytes.subarray(0, 4).toString('hex') +
+      '-' +
+      bytes.subarray(4, 6).toString('hex') +
+      '-' +
+      bytes.subarray(6, 8).toString('hex') +
+      '-' +
+      bytes.subarray(8, 10).toString('hex') +
+      '-' +
+      bytes.subarray(10, 16).toString('hex')
+    );
+  }
+
+  /**
    * @param {StreamReader} reader
    * @returns {Promise<string|null>}
    */

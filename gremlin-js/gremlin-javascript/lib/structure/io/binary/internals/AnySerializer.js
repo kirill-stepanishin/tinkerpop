@@ -100,4 +100,54 @@ export default class AnySerializer {
     }
     return result;
   }
+
+  /**
+   * Synchronous deserialization from a buffer-backed StreamReader.
+   *
+   * Verbatim sibling of deserialize() with the awaits removed, used exclusively by the
+   * buffered submit() decode path. Reads type_code + value_flag, dispatches via the SAME
+   * this.ioc.serializers map as the async path, and replicates the _postDeserialize hook
+   * so preciseNumbers mode still wraps Int/Long/Float/Double/Short/Byte.
+   *
+   * @param {StreamReader} reader
+   * @returns {any}
+   */
+  deserializeSync(reader) {
+    const pos = reader.position;
+    const type_code = reader.readUInt8Sync();
+    const serializer = this.ioc.serializers[type_code];
+    if (!serializer) {
+      throw new Error(`AnySerializer: unknown {type_code}=0x${type_code.toString(16)} at position ${pos}`);
+    }
+
+    const value_flag = reader.readUInt8Sync();
+    if (value_flag === 0x01) {
+      return null;
+    }
+    if (value_flag !== 0x00 && value_flag !== 0x02) {
+      throw new Error(`AnySerializer: unexpected {value_flag}=0x${value_flag.toString(16)} at position ${pos}`);
+    }
+
+    if (typeof serializer.deserializeValueSync !== 'function') {
+      // A dispatched serializer (e.g. a user-supplied custom type) lacks a sync core.
+      // Fail with a precise message rather than crashing on `undefined is not a function`.
+      throw new Error(
+        `${serializer.constructor.name}.deserializeValueSync() at position ${pos}: ` +
+          'synchronous decoding is not supported for this type_code on the buffered path',
+      );
+    }
+
+    let result;
+    try {
+      result = serializer.deserializeValueSync(reader, value_flag, type_code);
+    } catch (err) {
+      err.message = `${serializer.constructor.name}.deserializeValueSync() at position ${pos}: ${err.message}`;
+      throw err;
+    }
+
+    if (this._postDeserialize) {
+      return this._postDeserialize(result, type_code);
+    }
+    return result;
+  }
 }

@@ -59,6 +59,17 @@ export default class ByteSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {number}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    return reader.readByteSync();
+  }
+
+  /**
    * @param {StreamReader} reader
    * @returns {Promise<number|null>}
    */

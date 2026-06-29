@@ -84,6 +84,26 @@ export default class PropertySerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Property}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    // {key} bare string (length + text_value)
+    const key = this.ioc.stringSerializer.deserializeValueSync(reader, 0x00, typeCode);
+
+    // {value} fully qualified
+    const value = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {parent} fully qualified (always null in current TinkerPop)
+    this.ioc.anySerializer.deserializeSync(reader);
+
+    return new Property(key, value);
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Property|null>}

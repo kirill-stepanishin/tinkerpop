@@ -77,6 +77,23 @@ export default class PathSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Path}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    // {labels} fully qualified list
+    const labels = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {objects} fully qualified list
+    const objects = this.ioc.anySerializer.deserializeSync(reader);
+
+    return new Path(labels, objects);
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Path|null>}

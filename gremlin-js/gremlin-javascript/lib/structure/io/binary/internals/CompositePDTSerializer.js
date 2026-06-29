@@ -68,6 +68,30 @@ export default class CompositePDTSerializer {
     return pdt;
   }
 
+  /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const name = this.ioc.anySerializer.deserializeSync(reader);
+    if (!name) {
+      throw new Error('CompositePDTSerializer: name cannot be null or empty');
+    }
+    const fieldsRaw = this.ioc.anySerializer.deserializeSync(reader);
+    const fields = fieldsRaw instanceof Map ? Object.fromEntries(fieldsRaw) : fieldsRaw || {};
+    const pdt = new ProviderDefinedType(name, fields);
+    const pdtRegistry = reader.pdtRegistry;
+    if (pdtRegistry) {
+      const hydrated = pdtRegistry.hydrate(pdt);
+      if (!(hydrated instanceof ProviderDefinedType)) {
+        return hydrated;
+      }
+    }
+    return pdt;
+  }
+
   async deserialize(reader) {
     const type_code = await reader.readUInt8();
     if (type_code !== this.ioc.DataType.COMPOSITEPDT) {

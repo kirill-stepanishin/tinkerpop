@@ -134,6 +134,50 @@ export default class EdgeSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Edge}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    // {id} fully qualified
+    const id = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {label} bare list, extract first element
+    const labelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+    const label = Array.isArray(labelList) && labelList.length > 0 ? labelList[0] : labelList;
+
+    // {inVId} fully qualified
+    const inVId = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {inVLabel} bare list, extract first element
+    const inVLabelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+    const inVLabel = Array.isArray(inVLabelList) && inVLabelList.length > 0 ? inVLabelList[0] : inVLabelList;
+
+    // {outVId} fully qualified
+    const outVId = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {outVLabel} bare list, extract first element
+    const outVLabelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+    const outVLabel = Array.isArray(outVLabelList) && outVLabelList.length > 0 ? outVLabelList[0] : outVLabelList;
+
+    // {parent} fully qualified (always null in current TinkerPop)
+    this.ioc.anySerializer.deserializeSync(reader);
+
+    // {properties} fully qualified
+    const properties = this.ioc.anySerializer.deserializeSync(reader);
+
+    return new Edge(
+      id,
+      new Vertex(outVId, outVLabel, null),
+      label,
+      new Vertex(inVId, inVLabel, null),
+      properties || [],
+    );
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Edge|null>}

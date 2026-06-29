@@ -75,6 +75,15 @@ export default class IntSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeBare for the buffered path.
+   * @param {StreamReader} reader
+   * @returns {number}
+   */
+  deserializeBareSync(reader) {
+    return reader.readInt32BESync();
+  }
+
+  /**
    * @param {StreamReader} reader
    * @param {number} valueFlag - already consumed by AnySerializer
    * @param {number} typeCode
@@ -82,6 +91,17 @@ export default class IntSerializer {
    */
   async deserializeValue(reader, valueFlag, typeCode) {
     return await reader.readInt32BE();
+  }
+
+  /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {number}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    return reader.readInt32BESync();
   }
 
   /**

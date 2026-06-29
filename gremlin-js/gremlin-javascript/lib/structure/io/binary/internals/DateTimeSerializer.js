@@ -83,7 +83,28 @@ export default class DateTimeSerializer {
   async deserializeValue(reader, valueFlag, typeCode) {
     // 18 bytes: year(4) + month(1) + day(1) + nanos(8) + utcOffset(4)
     const buf = await reader.readBytes(18);
+    return this._dateFromBuffer(buf);
+  }
 
+  /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Date}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    // 18 bytes: year(4) + month(1) + day(1) + nanos(8) + utcOffset(4)
+    const buf = reader.readBytesSync(18);
+    return this._dateFromBuffer(buf);
+  }
+
+  /**
+   * Decode an 18-byte DateTime buffer into a JS Date. Shared by the async and sync paths.
+   * @param {Buffer} buf
+   * @returns {Date}
+   */
+  _dateFromBuffer(buf) {
     let offset = 0;
     const year = buf.readInt32BE(offset);
     offset += 4;

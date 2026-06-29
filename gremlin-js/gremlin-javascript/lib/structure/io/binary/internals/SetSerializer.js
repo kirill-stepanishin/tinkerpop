@@ -94,6 +94,35 @@ export default class SetSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag - 0x00 for normal, 0x02 for bulked
+   * @param {number} typeCode
+   * @returns {Set}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const isBulked = valueFlag === 0x02;
+    const length = this.ioc.intSerializer.deserializeBareSync(reader);
+    if (length < 0) {
+      throw new Error(`SetSerializer: {length}=${length} is less than zero`);
+    }
+
+    const v = new Set();
+    for (let i = 0; i < length; i++) {
+      const value = this.ioc.anySerializer.deserializeSync(reader);
+
+      if (isBulked) {
+        // consume the bulk count; Set.add is idempotent so count doesn't matter
+        reader.readBigInt64BESync();
+      }
+
+      v.add(value);
+    }
+
+    return v;
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Set|null>}

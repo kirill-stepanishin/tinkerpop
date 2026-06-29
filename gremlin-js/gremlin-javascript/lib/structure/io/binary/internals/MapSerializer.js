@@ -98,6 +98,29 @@ export default class MapSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Map}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const length = this.ioc.intSerializer.deserializeBareSync(reader);
+    if (length < 0) {
+      throw new Error(`MapSerializer: {length}=${length} is less than zero`);
+    }
+
+    const v = new Map();
+    for (let i = 0; i < length; i++) {
+      const key = this.ioc.anySerializer.deserializeSync(reader);
+      const value = this.ioc.anySerializer.deserializeSync(reader);
+      v.set(key, value);
+    }
+
+    return v;
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Map|null>}

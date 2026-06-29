@@ -66,6 +66,21 @@ export default class BooleanSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {boolean}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const v = reader.readUInt8Sync();
+    if (v !== 0x00 && v !== 0x01) {
+      throw new Error(`BooleanSerializer: unexpected boolean byte=0x${v.toString(16)}`);
+    }
+    return v === 0x01;
+  }
+
+  /**
    * @param {StreamReader} reader
    * @returns {Promise<boolean|null>}
    */

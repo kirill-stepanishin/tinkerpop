@@ -107,6 +107,24 @@ export default class EnumSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {EnumValue}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const typeName = this._typeNameForCode(typeCode);
+    // elementName is a fully-qualified String (type_code + value_flag + length + text)
+    const elementName = this.ioc.stringSerializer.deserializeSync(reader);
+
+    if (typeName) {
+      return this.types[typeName].enum[elementName];
+    }
+    return new EnumValue(undefined, elementName);
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<EnumValue|null>}

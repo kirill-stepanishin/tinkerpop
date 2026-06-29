@@ -99,6 +99,37 @@ export default class ArraySerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag - 0x00 for normal, 0x02 for bulked
+   * @param {number} typeCode
+   * @returns {Array}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const isBulked = valueFlag === 0x02;
+    const length = this.ioc.intSerializer.deserializeBareSync(reader);
+    if (length < 0) {
+      throw new Error(`ArraySerializer: {length}=${length} is less than zero`);
+    }
+
+    const v = [];
+    for (let i = 0; i < length; i++) {
+      const value = this.ioc.anySerializer.deserializeSync(reader);
+
+      if (isBulked) {
+        const bulkCount = reader.readBigInt64BESync();
+        for (let j = 0n; j < bulkCount; j++) {
+          v.push(value);
+        }
+      } else {
+        v.push(value);
+      }
+    }
+
+    return v;
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Array|null>}

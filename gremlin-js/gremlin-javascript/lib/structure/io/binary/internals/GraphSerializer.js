@@ -204,6 +204,92 @@ export default class GraphSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Graph}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const graph = new Graph();
+
+    // {vertex_count} bare int
+    const vertexCount = this.ioc.intSerializer.deserializeBareSync(reader);
+    for (let i = 0; i < vertexCount; i++) {
+      // {id} fully qualified
+      const vId = this.ioc.anySerializer.deserializeSync(reader);
+
+      // {label} value-only list, first element
+      const vLabelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+      const vLabel = Array.isArray(vLabelList) && vLabelList.length > 0 ? vLabelList[0] : vLabelList;
+
+      const vertex = new Vertex(vId, vLabel, []);
+      graph.vertices.set(vId, vertex);
+
+      // {vp_count} bare int
+      const vpCount = this.ioc.intSerializer.deserializeBareSync(reader);
+      for (let j = 0; j < vpCount; j++) {
+        // {vp_id} fully qualified
+        const vpId = this.ioc.anySerializer.deserializeSync(reader);
+
+        // {vp_label} value-only list, first element
+        const vpLabelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+        const vpLabel = Array.isArray(vpLabelList) && vpLabelList.length > 0 ? vpLabelList[0] : vpLabelList;
+
+        // {vp_value} fully qualified
+        const vpValue = this.ioc.anySerializer.deserializeSync(reader);
+
+        // {parent} fully qualified (always null)
+        this.ioc.anySerializer.deserializeSync(reader);
+
+        // {meta_props} value-only list
+        const metaProps = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+
+        const vp = new VertexProperty(vpId, vpLabel, vpValue, metaProps || []);
+        vertex.properties.push(vp);
+      }
+    }
+
+    // {edge_count} bare int
+    const edgeCount = this.ioc.intSerializer.deserializeBareSync(reader);
+    for (let i = 0; i < edgeCount; i++) {
+      // {id} fully qualified
+      const eId = this.ioc.anySerializer.deserializeSync(reader);
+
+      // {label} value-only list, first element
+      const eLabelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+      const eLabel = Array.isArray(eLabelList) && eLabelList.length > 0 ? eLabelList[0] : eLabelList;
+
+      // {inV_id} fully qualified
+      const inVId = this.ioc.anySerializer.deserializeSync(reader);
+
+      // {inV_label} fully qualified (always null placeholder) — discard
+      this.ioc.anySerializer.deserializeSync(reader);
+
+      // {outV_id} fully qualified
+      const outVId = this.ioc.anySerializer.deserializeSync(reader);
+
+      // {outV_label} fully qualified (always null placeholder) — discard
+      this.ioc.anySerializer.deserializeSync(reader);
+
+      // {parent} fully qualified (always null) — discard
+      this.ioc.anySerializer.deserializeSync(reader);
+
+      // {edge_props} value-only list
+      const edgeProps = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+
+      // Reuse vertex instances already in graph.vertices, otherwise build stand-ins
+      const inV = graph.vertices.get(inVId) || new Vertex(inVId, '', []);
+      const outV = graph.vertices.get(outVId) || new Vertex(outVId, '', []);
+
+      const edge = new Edge(eId, outV, eLabel, inV, edgeProps || []);
+      graph.edges.set(eId, edge);
+    }
+
+    return graph;
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Graph|null>}

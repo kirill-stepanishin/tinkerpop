@@ -82,6 +82,24 @@ export default class BinarySerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Buffer}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const length = this.ioc.intSerializer.deserializeBareSync(reader);
+    if (length < 0) {
+      throw new Error(`BinarySerializer: {length}=${length} is less than zero`);
+    }
+    if (length === 0) {
+      return Buffer.alloc(0);
+    }
+    return reader.readBytesSync(length);
+  }
+
+  /**
    * @param {StreamReader} reader
    * @returns {Promise<Buffer|null>}
    */

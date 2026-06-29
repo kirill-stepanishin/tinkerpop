@@ -67,6 +67,21 @@ export default class LongSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {number|bigint}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    let v = reader.readBigInt64BESync();
+    if (v >= Number.MIN_SAFE_INTEGER && v <= Number.MAX_SAFE_INTEGER) {
+      v = Number(v);
+    }
+    return v;
+  }
+
+  /**
    * Read a fully-qualified long from the StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<number|bigint|null>}
@@ -84,5 +99,25 @@ export default class LongSerializer {
       throw new Error(`LongSerializer: unexpected {value_flag}=0x${value_flag.toString(16)}`);
     }
     return this.deserializeValue(reader, value_flag, type_code);
+  }
+
+  /**
+   * Synchronous sibling of deserialize (fully-qualified) for the buffered path.
+   * @param {StreamReader} reader
+   * @returns {number|bigint|null}
+   */
+  deserializeSync(reader) {
+    const type_code = reader.readUInt8Sync();
+    if (type_code !== this.ioc.DataType.LONG) {
+      throw new Error(`LongSerializer: unexpected {type_code}=0x${type_code.toString(16)}`);
+    }
+    const value_flag = reader.readUInt8Sync();
+    if (value_flag === 0x01) {
+      return null;
+    }
+    if (value_flag !== 0x00) {
+      throw new Error(`LongSerializer: unexpected {value_flag}=0x${value_flag.toString(16)}`);
+    }
+    return this.deserializeValueSync(reader, value_flag, type_code);
   }
 }

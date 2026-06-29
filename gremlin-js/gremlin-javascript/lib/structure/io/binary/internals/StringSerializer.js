@@ -73,6 +73,25 @@ export default class StringSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {string}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const length = this.ioc.intSerializer.deserializeBareSync(reader);
+    if (length < 0) {
+      throw new Error(`StringSerializer: {length}=${length} is less than zero`);
+    }
+    if (length === 0) {
+      return '';
+    }
+    const bytes = reader.readBytesSync(length);
+    return bytes.toString('utf8');
+  }
+
+  /**
    * Read a fully-qualified string from the StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<string|null>}
@@ -90,5 +109,25 @@ export default class StringSerializer {
       throw new Error(`StringSerializer: unexpected {value_flag}=0x${value_flag.toString(16)}`);
     }
     return this.deserializeValue(reader, value_flag, type_code);
+  }
+
+  /**
+   * Synchronous sibling of deserialize (fully-qualified) for the buffered path.
+   * @param {StreamReader} reader
+   * @returns {string|null}
+   */
+  deserializeSync(reader) {
+    const type_code = reader.readUInt8Sync();
+    if (type_code !== this.ID) {
+      throw new Error(`StringSerializer: unexpected {type_code}=0x${type_code.toString(16)}`);
+    }
+    const value_flag = reader.readUInt8Sync();
+    if (value_flag === 0x01) {
+      return null;
+    }
+    if (value_flag !== 0x00) {
+      throw new Error(`StringSerializer: unexpected {value_flag}=0x${value_flag.toString(16)}`);
+    }
+    return this.deserializeValueSync(reader, value_flag, type_code);
   }
 }

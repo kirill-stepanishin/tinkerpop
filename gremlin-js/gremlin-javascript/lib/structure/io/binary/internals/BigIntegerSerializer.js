@@ -109,6 +109,27 @@ export default class BigIntegerSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {bigint}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    const length = this.ioc.intSerializer.deserializeBareSync(reader);
+    if (length < 1) {
+      throw new Error(`BigIntegerSerializer: {length}=${length} is less than one`);
+    }
+    const bytes = reader.readBytesSync(length);
+    let v = BigInt(`0x${bytes.toString('hex')}`);
+    const is_sign_bit_set = (bytes[0] & 0x80) === 0x80;
+    if (is_sign_bit_set) {
+      v = BigInt.asIntN(length * 8, v);
+    }
+    return v;
+  }
+
+  /**
    * @param {StreamReader} reader
    * @returns {Promise<bigint|null>}
    */

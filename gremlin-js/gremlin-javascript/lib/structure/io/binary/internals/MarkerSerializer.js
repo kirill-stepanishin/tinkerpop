@@ -39,6 +39,20 @@ export default class MarkerSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @returns {symbol}
+   */
+  deserializeValueSync(reader, valueFlag) {
+    const value = reader.readUInt8Sync();
+    if (value !== 0) {
+      throw new Error(`unexpected marker value: ${value}`);
+    }
+    return END_OF_STREAM;
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<symbol|null>}

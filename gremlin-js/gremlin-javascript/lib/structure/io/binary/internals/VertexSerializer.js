@@ -85,6 +85,27 @@ export default class VertexSerializer {
   }
 
   /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   * @param {number} typeCode
+   * @returns {Vertex}
+   */
+  deserializeValueSync(reader, valueFlag, typeCode) {
+    // {id} fully qualified
+    const id = this.ioc.anySerializer.deserializeSync(reader);
+
+    // {label} bare list, extract first element
+    const labelList = this.ioc.listSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.LIST);
+    const label = Array.isArray(labelList) && labelList.length > 0 ? labelList[0] : labelList;
+
+    // {properties} fully qualified
+    const properties = this.ioc.anySerializer.deserializeSync(reader);
+
+    return new Vertex(id, label, properties || []);
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Vertex|null>}

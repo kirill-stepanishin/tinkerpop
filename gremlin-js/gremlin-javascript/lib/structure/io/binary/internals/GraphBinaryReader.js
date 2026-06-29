@@ -53,6 +53,9 @@ export default class GraphBinaryReader {
    * @param {Buffer} buffer
    * @returns {Promise<{status: {code, message, exception}, result: {data: any[], bulked: boolean}}>}
    */
+  // Stays async to preserve the public Promise-returning signature, but the entire decode
+  // runs synchronously over the already-buffered body via #readFromReaderSync — no await.
+  // eslint-disable-next-line require-await
   async readResponse(buffer) {
     if (buffer === undefined || buffer === null) {
       throw new Error('Buffer is missing.');
@@ -66,7 +69,7 @@ export default class GraphBinaryReader {
 
     const reader = StreamReader.fromBuffer(buffer);
     reader.pdtRegistry = this.pdtRegistry;
-    return await this.#readFromReader(reader);
+    return this.#readFromReaderSync(reader);
   }
 
   /**
@@ -129,46 +132,8 @@ export default class GraphBinaryReader {
   }
 
   /**
-   * Internal: read the full response into a collected result (non-streaming).
-   */
-  async #readFromReader(reader) {
-    // {version}
-    const version = await reader.readUInt8();
-    if (version !== 0x84) {
-      throw new Error(`Unsupported version '${version}'.`);
-    }
-
-    // {bulked}
-    const bulked = (await reader.readUInt8()) === 0x01;
-
-    // {result_data} — collect all values
-    const data = [];
-    while (true) {
-      const value = await this.ioc.anySerializer.deserialize(reader);
-
-      if (value === END_OF_STREAM) {
-        break;
-      }
-
-      if (bulked) {
-        const bulk = await this.ioc.longSerializer.deserialize(reader);
-        data.push({ v: value, bulk: Number(bulk) });
-      } else {
-        data.push(value);
-      }
-    }
-
-    // {status}
-    const status = await this.#readStatus(reader);
-
-    return {
-      status,
-      result: { data, bulked },
-    };
-  }
-
-  /**
    * Read the status block: {code:Int bare}{message:nullable String}{exception:nullable String}
+   * Used by the streaming readResponseStream() path.
    */
   async #readStatus(reader) {
     const code = await reader.readInt32BE();
@@ -183,6 +148,69 @@ export default class GraphBinaryReader {
     const excFlag = await reader.readUInt8();
     if (excFlag === 0x00) {
       exception = await this.ioc.stringSerializer.deserializeValue(reader, 0x00, this.ioc.DataType.STRING);
+    }
+
+    return { code, message, exception };
+  }
+
+  /**
+   * Internal: fully synchronous sibling of #readFromReader for the buffered submit() path.
+   * Operates over a buffer-backed StreamReader with a plain while-loop, removing all
+   * await/microtask hops from the innermost decode loop.
+   */
+  #readFromReaderSync(reader) {
+    // {version}
+    const version = reader.readUInt8Sync();
+    if (version !== 0x84) {
+      throw new Error(`Unsupported version '${version}'.`);
+    }
+
+    // {bulked}
+    const bulked = reader.readUInt8Sync() === 0x01;
+
+    // {result_data} — collect all values
+    const data = [];
+    while (true) {
+      const value = this.ioc.anySerializer.deserializeSync(reader);
+
+      if (value === END_OF_STREAM) {
+        break;
+      }
+
+      if (bulked) {
+        const bulk = this.ioc.longSerializer.deserializeSync(reader);
+        data.push({ v: value, bulk: Number(bulk) });
+      } else {
+        data.push(value);
+      }
+    }
+
+    // {status}
+    const status = this.#readStatusSync(reader);
+
+    return {
+      status,
+      result: { data, bulked },
+    };
+  }
+
+  /**
+   * Synchronous sibling of #readStatus.
+   * Reads {code:Int bare}{message:nullable String}{exception:nullable String}.
+   */
+  #readStatusSync(reader) {
+    const code = reader.readInt32BESync();
+
+    let message = null;
+    const msgFlag = reader.readUInt8Sync();
+    if (msgFlag === 0x00) {
+      message = this.ioc.stringSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.STRING);
+    }
+
+    let exception = null;
+    const excFlag = reader.readUInt8Sync();
+    if (excFlag === 0x00) {
+      exception = this.ioc.stringSerializer.deserializeValueSync(reader, 0x00, this.ioc.DataType.STRING);
     }
 
     return { code, message, exception };

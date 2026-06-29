@@ -200,4 +200,116 @@ export default class StreamReader {
     this.#position += 8;
     return v;
   }
+
+  // --- Synchronous read primitives ---
+  //
+  // These operate directly on the in-memory buffer with no async I/O. They are
+  // valid ONLY for buffer-backed readers (built via fromBuffer, i.e. #reader === null)
+  // and are used exclusively by the buffered submit() decode path. They reuse the same
+  // #buffer/#offset/#position bookkeeping as the async primitives so offsets and error
+  // positions remain a single source of truth. Stream-backed readers must never call
+  // these — they throw because the data may not yet be buffered.
+
+  /**
+   * Bounds check for sync reads. Throws if this is a stream-backed reader or if fewer
+   * than `n` bytes remain in the buffer.
+   * @param {number} n
+   */
+  #ensureSync(n) {
+    if (this.#reader !== null) {
+      throw new Error('Synchronous reads are only supported on buffer-backed StreamReaders.');
+    }
+    const available = this.#buffer.length - this.#offset;
+    if (available < n) {
+      throw new Error(
+        `Unexpected end of buffer at position ${this.#position}: needed ${n} bytes, ${available} available`,
+      );
+    }
+  }
+
+  /**
+   * Read exactly `n` bytes and return them as a Buffer.
+   * @param {number} n
+   * @returns {Buffer}
+   */
+  readBytesSync(n) {
+    this.#ensureSync(n);
+    const result = this.#buffer.subarray(this.#offset, this.#offset + n);
+    this.#offset += n;
+    this.#position += n;
+    return result;
+  }
+
+  /**
+   * @returns {number} unsigned 8-bit integer
+   */
+  readUInt8Sync() {
+    this.#ensureSync(1);
+    this.#position++;
+    return this.#buffer[this.#offset++];
+  }
+
+  /**
+   * @returns {number} signed 8-bit integer
+   */
+  readByteSync() {
+    this.#ensureSync(1);
+    this.#position++;
+    return this.#buffer.readInt8(this.#offset++);
+  }
+
+  /**
+   * @returns {number} signed 16-bit big-endian integer
+   */
+  readInt16BESync() {
+    this.#ensureSync(2);
+    const v = this.#buffer.readInt16BE(this.#offset);
+    this.#offset += 2;
+    this.#position += 2;
+    return v;
+  }
+
+  /**
+   * @returns {number} signed 32-bit big-endian integer
+   */
+  readInt32BESync() {
+    this.#ensureSync(4);
+    const v = this.#buffer.readInt32BE(this.#offset);
+    this.#offset += 4;
+    this.#position += 4;
+    return v;
+  }
+
+  /**
+   * @returns {bigint} signed 64-bit big-endian integer
+   */
+  readBigInt64BESync() {
+    this.#ensureSync(8);
+    const v = this.#buffer.readBigInt64BE(this.#offset);
+    this.#offset += 8;
+    this.#position += 8;
+    return v;
+  }
+
+  /**
+   * @returns {number} 32-bit big-endian float
+   */
+  readFloatBESync() {
+    this.#ensureSync(4);
+    const v = this.#buffer.readFloatBE(this.#offset);
+    this.#offset += 4;
+    this.#position += 4;
+    return v;
+  }
+
+  /**
+   * @returns {number} 64-bit big-endian double
+   */
+  readDoubleBESync() {
+    this.#ensureSync(8);
+    const v = this.#buffer.readDoubleBE(this.#offset);
+    this.#offset += 8;
+    this.#position += 8;
+    return v;
+  }
 }

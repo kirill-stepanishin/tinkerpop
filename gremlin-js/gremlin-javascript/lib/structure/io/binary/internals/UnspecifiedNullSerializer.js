@@ -47,4 +47,13 @@ export default class UnspecifiedNullSerializer {
   async deserializeValue(reader, valueFlag) {
     throw new Error('UnspecifiedNull should always have value_flag=0x01');
   }
+
+  /**
+   * Synchronous sibling of deserializeValue for the buffered path.
+   * @param {StreamReader} reader
+   * @param {number} valueFlag
+   */
+  deserializeValueSync(reader, valueFlag) {
+    throw new Error('UnspecifiedNull should always have value_flag=0x01');
+  }
 }
