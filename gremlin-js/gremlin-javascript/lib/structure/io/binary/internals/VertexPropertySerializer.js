@@ -83,8 +83,8 @@ export default class VertexPropertySerializer {
     // {id} fully qualified
     const id = await this.ioc.anySerializer.deserialize(reader);
 
-    // {label} bare list, extract first element
-    const labelList = await this.ioc.listSerializer.deserializeValue(reader, 0x00, this.ioc.DataType.LIST);
+    // {label} bare list, first element (no throwaway Array for the single-label case)
+    const labelList = await this.ioc.listSerializer.deserializeFirstLabel(reader);
     const label = Array.isArray(labelList) && labelList.length > 0 ? labelList[0] : labelList;
 
     // {value} fully qualified

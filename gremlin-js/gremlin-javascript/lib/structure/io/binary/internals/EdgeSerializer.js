@@ -100,22 +100,22 @@ export default class EdgeSerializer {
     // {id} fully qualified
     const id = await this.ioc.anySerializer.deserialize(reader);
 
-    // {label} bare list, extract first element
-    const labelList = await this.ioc.listSerializer.deserializeValue(reader, 0x00, this.ioc.DataType.LIST);
+    // {label} bare list, first element (no throwaway Array for the single-label case)
+    const labelList = await this.ioc.listSerializer.deserializeFirstLabel(reader);
     const label = Array.isArray(labelList) && labelList.length > 0 ? labelList[0] : labelList;
 
     // {inVId} fully qualified
     const inVId = await this.ioc.anySerializer.deserialize(reader);
 
-    // {inVLabel} bare list, extract first element
-    const inVLabelList = await this.ioc.listSerializer.deserializeValue(reader, 0x00, this.ioc.DataType.LIST);
+    // {inVLabel} bare list, first element (no throwaway Array for the single-label case)
+    const inVLabelList = await this.ioc.listSerializer.deserializeFirstLabel(reader);
     const inVLabel = Array.isArray(inVLabelList) && inVLabelList.length > 0 ? inVLabelList[0] : inVLabelList;
 
     // {outVId} fully qualified
     const outVId = await this.ioc.anySerializer.deserialize(reader);
 
-    // {outVLabel} bare list, extract first element
-    const outVLabelList = await this.ioc.listSerializer.deserializeValue(reader, 0x00, this.ioc.DataType.LIST);
+    // {outVLabel} bare list, first element (no throwaway Array for the single-label case)
+    const outVLabelList = await this.ioc.listSerializer.deserializeFirstLabel(reader);
     const outVLabel = Array.isArray(outVLabelList) && outVLabelList.length > 0 ? outVLabelList[0] : outVLabelList;
 
     // {parent} fully qualified (always null in current TinkerPop)

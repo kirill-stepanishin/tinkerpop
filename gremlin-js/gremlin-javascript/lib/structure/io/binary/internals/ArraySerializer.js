@@ -99,6 +99,36 @@ export default class ArraySerializer {
   }
 
   /**
+   * Reads a bare value-only label list and returns the label directly, avoiding a
+   * throwaway one-element Array for the common single-label case.
+   * - length === 0 -> returns the empty array (preserves the historical empty-list fallback)
+   * - length === 1 -> returns the single decoded element (no Array allocation)
+   * - length > 1  -> returns the full Array (call site's [0] extraction still applies)
+   * @param {StreamReader} reader
+   * @returns {Promise<*>}
+   */
+  async deserializeFirstLabel(reader) {
+    const length = await this.ioc.intSerializer.deserializeBare(reader);
+    if (length < 0) {
+      throw new Error(`ArraySerializer: {length}=${length} is less than zero`);
+    }
+
+    if (length === 0) {
+      return [];
+    }
+
+    if (length === 1) {
+      return this.ioc.anySerializer.deserialize(reader);
+    }
+
+    const v = [];
+    for (let i = 0; i < length; i++) {
+      v.push(await this.ioc.anySerializer.deserialize(reader));
+    }
+    return v;
+  }
+
+  /**
    * Async fully-qualified deserialization from a StreamReader.
    * @param {StreamReader} reader
    * @returns {Promise<Array|null>}
