@@ -129,7 +129,7 @@ export default class EdgeSerializer {
       new Vertex(outVId, outVLabel, null),
       label,
       new Vertex(inVId, inVLabel, null),
-      properties || [],
+      properties,
     );
   }
 

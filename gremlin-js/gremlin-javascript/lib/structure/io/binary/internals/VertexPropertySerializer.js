@@ -96,7 +96,7 @@ export default class VertexPropertySerializer {
     // {properties} fully qualified
     const properties = await this.ioc.anySerializer.deserialize(reader);
 
-    return new VertexProperty(id, label, value, properties || []);
+    return new VertexProperty(id, label, value, properties);
   }
 
   /**

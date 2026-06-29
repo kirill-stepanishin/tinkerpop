@@ -43,10 +43,12 @@ export class Graph {
 
 class Element<TLabel extends string = string, TId = any> {
   // properties are stored as list of property objects
+  readonly properties: Property[];
+
   constructor(
     readonly id: TId,
     readonly label: TLabel,
-    readonly properties: Property[] = []
+    properties: Property[] | null = []
   ) {
     this.properties = properties ?? [];
   }
@@ -72,7 +74,7 @@ export class Vertex<
     label: TLabel,
     properties: Property[] | null = [],
   ) {
-    super(id, label, properties ?? []);
+    super(id, label, properties);
   }
 
   toString() {
@@ -94,7 +96,7 @@ export class Edge<
     readonly inV: TInVertex,
     properties: Property[] | null = [],
   ) {
-    super(id, label, properties ?? []);
+    super(id, label, properties);
   }
 
   toString() {
@@ -119,8 +121,7 @@ export class VertexProperty<
     readonly value: TValue,
     properties: Property[] | null = [],
   ) {
-    super(id, label, properties ?? []);
-    this.value = value;
+    super(id, label, properties);
     this.key = this.label;
   }
 
