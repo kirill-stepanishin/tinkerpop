@@ -74,7 +74,7 @@ export default class AnySerializer {
   async deserialize(reader) {
     const pos = reader.position;
     const type_code = await reader.readUInt8();
-    const serializer = this.ioc.serializers[type_code];
+    const serializer = this.ioc.serializersDense[type_code];
     if (!serializer) {
       throw new Error(`AnySerializer: unknown {type_code}=0x${type_code.toString(16)} at position ${pos}`);
     }

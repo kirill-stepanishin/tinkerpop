@@ -115,6 +115,16 @@ function createIoc(anySerializerOptions) {
   ioc.pdtRegistry = null;
 
   ioc.numberSerializationStrategy = new NumberSerializationStrategy(ioc);
+
+  // Build a dense 256-entry dispatch array keyed by type_code from the just-built
+  // sparse ioc.serializers registry, so AnySerializer.deserialize() does a monomorphic
+  // in-bounds element load instead of probing a dictionary-mode object per element.
+  // ioc.serializers stays the registration API; this is an internal derived cache.
+  ioc.serializersDense = new Array(256);
+  for (const k of Object.keys(ioc.serializers)) {
+    ioc.serializersDense[Number(k)] = ioc.serializers[k];
+  }
+
   ioc.anySerializer = new AnySerializer(ioc, anySerializerOptions);
 
   ioc.graphBinaryReader = new GraphBinaryReader(ioc);
