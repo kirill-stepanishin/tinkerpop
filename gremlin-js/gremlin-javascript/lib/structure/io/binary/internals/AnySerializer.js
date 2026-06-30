@@ -72,11 +72,13 @@ export default class AnySerializer {
    * @returns {Promise<any>}
    */
   async deserialize(reader) {
-    const pos = reader.position;
+    const serializers = this.ioc.serializers;
+    const pd = this._postDeserialize;
+
     const type_code = await reader.readUInt8();
-    const serializer = this.ioc.serializers[type_code];
+    const serializer = serializers[type_code];
     if (!serializer) {
-      throw new Error(`AnySerializer: unknown {type_code}=0x${type_code.toString(16)} at position ${pos}`);
+      throw new Error(`AnySerializer: unknown {type_code}=0x${type_code.toString(16)} at position ${reader.position}`);
     }
 
     const value_flag = await reader.readUInt8();
@@ -84,19 +86,21 @@ export default class AnySerializer {
       return null;
     }
     if (value_flag !== 0x00 && value_flag !== 0x02) {
-      throw new Error(`AnySerializer: unexpected {value_flag}=0x${value_flag.toString(16)} at position ${pos}`);
+      throw new Error(
+        `AnySerializer: unexpected {value_flag}=0x${value_flag.toString(16)} at position ${reader.position}`,
+      );
     }
 
     let result;
     try {
       result = await serializer.deserializeValue(reader, value_flag, type_code);
     } catch (err) {
-      err.message = `${serializer.constructor.name}.deserializeValue() at position ${pos}: ${err.message}`;
+      err.message = `${serializer.constructor.name}.deserializeValue() at position ${reader.position}: ${err.message}`;
       throw err;
     }
 
-    if (this._postDeserialize) {
-      return this._postDeserialize(result, type_code);
+    if (pd) {
+      return pd(result, type_code);
     }
     return result;
   }
