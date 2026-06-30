@@ -118,6 +118,9 @@ class DataType(Enum):
 
 NULL_BYTES = [DataType.null.value, 0x01]
 
+# Module-scoped alias; null is checked on every read.
+_NULL = DataType.null.value
+
 
 def _make_packer(format_string):
     packer = struct.Struct(format_string)
@@ -187,6 +190,9 @@ class GraphBinaryReader(object):
         self.deserializers = _deserializers.copy()
         if deserializer_map:
             self.deserializers.update(deserializer_map)
+        # Int-keyed dispatch built from the enum-keyed map, so the type-byte
+        # path can look up objectify directly without constructing DataType(bt).
+        self._deserializer_by_type_code = {dt.value: des.objectify for dt, des in self.deserializers.items()}
 
     def read_object(self, b):
         if isinstance(b, bytearray):
@@ -197,11 +203,17 @@ class GraphBinaryReader(object):
     def to_object(self, buff, data_type=None, nullable=True):
         if data_type is None:
             bt = uint8_unpack(buff.read(1))
-            if bt == DataType.null.value:
+            if bt == _NULL:
                 if nullable:
                     buff.read(1)
                 return None
-            return self.deserializers[DataType(bt)].objectify(buff, self, nullable)
+            try:
+                objectify = self._deserializer_by_type_code[bt]
+            except KeyError:
+                # The int-keyed lookup raises KeyError on an unknown type byte;
+                # callers expect ValueError for an unrecognized DataType.
+                raise ValueError("%r is not a valid DataType" % bt)
+            return objectify(buff, self, nullable)
         else:
             return self.deserializers[data_type].objectify(buff, self, nullable)
 
