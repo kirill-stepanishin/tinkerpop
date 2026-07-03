@@ -21,64 +21,92 @@ contended localhost).
 
 Each candidate is a single-commit, **javascript-only** change. Every one touches the GraphBinary V4
 deserialization hot path under
-`gremlin-js/gremlin-javascript/lib/structure/io/binary/internals/` — the per-type serializers
-(`*Serializer.js`), the buffered `StreamReader.js`, or `GraphBinaryReader.js`. No test files are
-touched. The server is identical for every arm; **only the client-side JavaScript deserializer
-changes**, so this is a clean apples-to-apples comparison.
+`gremlin-js/gremlin-javascript/lib/structure/io/binary/` — the per-type serializers
+(`internals/*Serializer.js`), the buffered `internals/StreamReader.js`, the reader
+`internals/GraphBinaryReader.js`, or the type-code dispatch in `GraphBinary.js`. The server is
+identical for every arm; **only the client-side JavaScript deserializer changes**, so this is a
+clean apples-to-apples comparison.
+
+> **Two candidates also touch one non-serializer source file each** — that is expected and still
+> client-side deser: `element-ctor-single-default` edits `lib/structure/graph.ts` (the Vertex/Edge/
+> VertexProperty constructors the serializers call), and `sync-buffer-reader` **adds** a new unit
+> test `test/unit/graphbinary/SyncBufferReader-test.js` for the new reader it introduces (it does
+> not modify an existing test). No existing test is altered on any arm.
 
 ### Baseline (pinned to an immutable fork-point SHA)
 
 The candidates were cut from the gremlin-javascript deser-optimization **fork point on branch
 `4-glv-profiling`**. **`4-glv-profiling` is a MOVING branch** — its tip advances as funnel-infra
-commits land — so the baseline is pinned to the immutable fork-point SHA **`5e7c118826`**, never the
-branch tip. A moving tip would silently mix extra commits into the comparison. (This is the same
-fork point the dotnet candidate set was cut from.)
+commits land — so the baseline is pinned to the immutable fork-point SHA **`5d575e51f8`**, never the
+branch tip. A moving tip would silently mix extra commits into the comparison.
 
-For this run the baseline branch **`bench-baseline-javascript`** = `5e7c118826` exactly — **no extra
+> **Note the fork point changed vs the earlier shallow JS run.** An earlier, superseded 5-branch JS
+> run forked from `5e7c118826` ("Add dotnet GLV to correctness funnel registry"). This current,
+> **deep** run forks from its child **`5d575e51f8`** ("python and javascript updates") — which is the
+> current tip of `4-glv-profiling`. Pin the baseline to `5d575e51f8`, and ignore the old 5-branch set
+> (`readstring-direct-tostring`, `any-combined-header-read`, `sync-streamreader-primitives`,
+> `flat-dispatch-table`, `sync-buffered-decoder`) — those branches are obsolete and are **not** in the
+> table below.
+
+For this run the baseline branch **`bench-baseline-javascript`** = `5d575e51f8` exactly — **no extra
 commit needed**. Unlike the gremlin-python run (which required an aiohttp profiling-app fix on top of
 its fork point), the **javascript profiling app needs no fix**: it builds and runs unchanged on the
 provisioned box. So:
 
-- **Baseline arm** = `bench-baseline-javascript` (= `5e7c118826`).
+- **Baseline arm** = `bench-baseline-javascript` (= `5d575e51f8`).
 - **Each candidate arm** = `bench-baseline-javascript` + exactly one deser commit (the
   `auto/cand-javascript-<id>` branch as the funnel produced it — no cherry-pick / `-fixed` scheme
   required, because there is no baseline fix to carry).
 
 > **Create the baseline branch if it doesn't exist yet** (mirrors `bench-baseline-dotnet`):
 > ```bash
-> git branch bench-baseline-javascript 5e7c118826    # immutable fork point
+> git branch bench-baseline-javascript 5d575e51f8    # immutable fork point
 > ```
 
-### The candidate set (5 branches — produced by the JS funnel run)
+### The candidate set (14 branches — the verified-green deep-run set)
 
-The current set is **5 gremlin-javascript candidates**, each ONE commit on `5e7c118826`, each
-touching files only within `binary/internals/`, all full-suite (`mvn clean install`, JS unit +
-integration) green — produced by `glv-correctness-funnel.workflow.js` (`args: { glv: "javascript" }`).
-The funnel produces this set **fresh each run — it is non-deterministic, do not assume a fixed set.**
+The current set is **14 gremlin-javascript candidates**, each ONE commit on `5d575e51f8`, all
+full-suite green (`mvn clean install` — mocha unit + graphbinary integration + cucumber-js features
++ node examples, run under the docker `glv-js` profile) — produced by the DEEP run of
+`glv-correctness-funnel.workflow.js` (`args: { glv: "javascript" }`, 10 lenses). The funnel produces
+this set **fresh each run — it is non-deterministic, do not assume a fixed set.**
 
-| Branch (`auto/cand-javascript-…`) | File(s) under `binary/internals/` | Risk | Breaks contract | Optimization |
-|---|---|---|---|---|
-| `readstring-direct-tostring` | `StreamReader.js`, `StringSerializer.js` | safe | no | decode strings via direct `Buffer.toString` (skip an intermediate copy) |
-| `any-combined-header-read` | `AnySerializer.js` | safe | no | read the AnySerializer type header as a single 2-byte fetch |
-| `sync-streamreader-primitives` | `StreamReader.js` | medium | no | synchronous read primitives on the buffered `StreamReader` (avoid per-read await) |
-| `flat-dispatch-table` | `AnySerializer.js` | medium | no | dispatch `AnySerializer.deserialize` through a type→serializer table |
-| `sync-buffered-decoder` | `AnySerializer.js`, `ArraySerializer.js`, `GraphBinaryReader.js`, `IntSerializer.js`, `LongSerializer.js`, `MarkerSerializer.js`, `StreamReader.js`, `StringSerializer.js`, `VertexPropertySerializer.js`, `VertexSerializer.js` | high-ceiling | **yes — public-api** | a whole synchronous buffered decode lane across the reader + serializers |
+The table is ordered smallest blast radius first. "Files" counts only the files each branch changes
+vs `5d575e51f8`.
 
-> **The one contract-breaker — benchmark it FIRST, judge it separately.**
-> `sync-buffered-decoder` is the `breaksContract` bucket of this run (`high-ceiling`, **public-api**):
-> it changes exported serializer signatures / the decode entry shape across ten files. It is
-> full-suite green, but merging it is a **major-version judgment call**. The whole point of measuring
-> it is to learn whether the wide blast radius buys a win large enough to justify the API churn — so
-> benchmark it, but keep it out of any "safe to merge now" conclusion. The other four are
-> contract-clean.
+| Branch (`auto/cand-javascript-…`) | Files changed | Blast radius | Optimization |
+|---|---|---|---|
+| `string-latin1-ascii-fastpath` | `StringSerializer.js` | 1 file, safe | `isAscii()` + latin1 fast-path in string decode |
+| `array-bulk-number-counter` | `ArraySerializer.js` | 1 file, safe | `Number` loop counter instead of BigInt in bulked array expansion |
+| `branchless-value-flag-switch` | `AnySerializer.js` | 1 file, safe | AnySerializer `value_flag` if-ladder → `switch` |
+| `anyserializer-tail-return` | `AnySerializer.js` | 1 file, safe | tail-return the AnySerializer default deserialize path |
+| `anyserializer-hoist-and-lazy-pos` | `AnySerializer.js` | 1 file, safe | hoist ioc refs, read position lazily |
+| `string-decode-at-offset` | `StreamReader.js`, `StringSerializer.js` | 2 files, medium | `readString(n)` decodes the buffer window in place, drops the `subarray` |
+| `fuse-string-length-bytes-read` | `StreamReader.js`, `StringSerializer.js` | 2 files, medium | fuse the int32 length + utf8 bytes read into one `StreamReader` call |
+| `dense-dispatch-table` | `GraphBinary.js`, `AnySerializer.js` | 2 files, medium | dense type-code dispatch in the GraphBinary read path |
+| `skip-null-parent-marker` | `EdgeSerializer.js`, `StreamReader.js`, `VertexPropertySerializer.js` | 3 files, medium | skip the null parent marker in element decode |
+| `sync-buffer-reader` | `GraphBinaryReader.js`, `SyncBufferReader.js` (+ its new unit test) | 3 files, medium | `SyncBufferReader` for the buffered `readResponse` path |
+| `element-ctor-single-default` | `graph.ts`, `EdgeSerializer.js`, `VertexPropertySerializer.js`, `VertexSerializer.js` | 4 files, medium | dedupe the properties-defaulting in the element constructors |
+| `long-bulk-safe-int-read` | `ArraySerializer.js`, `GraphBinaryReader.js`, `LongSerializer.js`, `SetSerializer.js`, `StreamReader.js` | 5 files, medium | avoid BigInt for in-range bulk-count Long reads |
+| `single-element-label-no-array` | `ArraySerializer.js`, `EdgeSerializer.js`, `GraphSerializer.js`, `VertexPropertySerializer.js`, `VertexSerializer.js` | 5 files, medium | avoid a throwaway array for single-element labels |
+| `sync-decode-core-buffered` | 29 files across `internals/` | **29 files, high blast radius** | a full synchronous decode lane for the buffered `submit()` path (streaming path stays async) |
 
-> **A 6th branch may be on the box.** A local/funnel artifact branch
-> `auto/cand-javascript-prealloc-array-result` (pre-size the array in `ArraySerializer`'s non-bulked
-> path) exists from the same family but is **not** in the 5-branch result table above. If you want it
-> measured, add it to `CANDIDATE_BRANCHES` as a 6th arm — it forks from the same `5e7c118826` and is
-> a single `ArraySerializer.js` commit. Otherwise ignore it.
+> **`sync-decode-core-buffered` — benchmark it, but judge its merge separately.** It is the largest
+> change by far (a whole synchronous decode lane spanning the reader + every per-type serializer,
+> 29 files). It is full-suite green and does **not** change the exported streaming contract — the
+> genuinely-incremental `connection.ts stream()` → `GraphBinaryReader.readResponseStream` path stays
+> async; only the already-buffered `submit()`/`#handleResponse` path gains the sync lane. But its wide
+> blast radius makes it a bigger review/merge commitment than the one-file arms, and it **overlaps
+> almost every other candidate's hot path**, so treat it as its own bucket: measure whether the wide
+> change buys a win large enough to justify the surface area, and don't fold it into a "safe to merge
+> now" batch with the small arms.
 
-All arms are pushed to the fork `git@github.com:kirill-stepanishin/tinkerpop.git`.
+> **Two branches the funnel REJECTED — do NOT benchmark them:**
+> `auto/cand-javascript-anyserializer-16bit-header` (review flagged a behavior risk) and
+> `auto/cand-javascript-ensure-sync-fastpath` (failed the mvn gate). They exist locally but are
+> excluded from this set. If you see 16 `auto/cand-javascript-*` branches, these are the two extras.
+
+All 14 arms + the baseline are pushed to the fork `git@github.com:kirill-stepanishin/tinkerpop.git`.
 
 > **Remote naming on the benchmarking EC2s.** On the pre-provisioned benchmarking boxes the repo
 > lives at **`~/tinkerpop-4`** and the fork is the **`fork`** remote (`origin` points at upstream
@@ -103,7 +131,9 @@ dominates total latency**. The **tiny** point `g.V()` (6 vertices) is a fixed-ov
 
 > **JS is single-threaded — no worker blind spot.** Unlike Go/.NET/Java (where decode runs off the
 > main thread), gremlin-javascript decodes on the one event-loop thread, so the wall-clock latency
-> and any CPU profile attribute cleanly to the deser path with no cross-thread accounting.
+> and any CPU profile attribute cleanly to the deser path with no cross-thread accounting. (The
+> stored JS profile confirms it is decode-CPU-bound on the main event loop; see
+> `javascript-profile-<date>.md`.)
 
 Two signals per candidate — one primary, one optional cross-check:
 
@@ -183,17 +213,26 @@ git clone git@github.com:kirill-stepanishin/tinkerpop.git ~/tinkerpop
 cd ~/tinkerpop
 git fetch origin
 # create the baseline branch from the immutable fork point if it isn't already pushed:
-git branch bench-baseline-javascript 5e7c118826 2>/dev/null || true
-# baseline first, then the 5 candidate arms (auto/cand-javascript-<id>):
-for b in auto/cand-javascript-readstring-direct-tostring \
-         auto/cand-javascript-any-combined-header-read \
-         auto/cand-javascript-sync-streamreader-primitives \
-         auto/cand-javascript-flat-dispatch-table \
-         auto/cand-javascript-sync-buffered-decoder ; do
+git branch bench-baseline-javascript 5d575e51f8 2>/dev/null || true
+# baseline first, then the 14 candidate arms (auto/cand-javascript-<id>):
+for b in auto/cand-javascript-string-latin1-ascii-fastpath \
+         auto/cand-javascript-array-bulk-number-counter \
+         auto/cand-javascript-branchless-value-flag-switch \
+         auto/cand-javascript-anyserializer-tail-return \
+         auto/cand-javascript-anyserializer-hoist-and-lazy-pos \
+         auto/cand-javascript-string-decode-at-offset \
+         auto/cand-javascript-fuse-string-length-bytes-read \
+         auto/cand-javascript-dense-dispatch-table \
+         auto/cand-javascript-skip-null-parent-marker \
+         auto/cand-javascript-sync-buffer-reader \
+         auto/cand-javascript-element-ctor-single-default \
+         auto/cand-javascript-long-bulk-safe-int-read \
+         auto/cand-javascript-single-element-label-no-array \
+         auto/cand-javascript-sync-decode-core-buffered ; do
   git branch --track "$b" "origin/$b" 2>/dev/null || true   # provisioned box: "fork/$b"
 done
 git checkout bench-baseline-javascript
-git log --oneline -1           # confirm baseline = 5e7c118826
+git log --oneline -1           # confirm baseline = 5d575e51f8
 
 # --- the bench harness (run-only; PyYAML its only dep) ---
 pip3.11 install --user -e ~/tinkerpop/bench    # or `pip install -e bench` inside a venv
@@ -202,7 +241,9 @@ bench --help | head -1                          # expect: usage: bench ...
 chmod +x ~/tinkerpop/gremlin-js/gremlin-javascript/src/main/bin/profile-driver.sh
 
 # --- install JS deps ONCE (node_modules is branch-independent for these candidates) ---
-cd ~/tinkerpop/gremlin-js/gremlin-javascript
+# NOTE: node_modules is a WORKSPACE hoisted to the gremlin-js/ ROOT (workspaces:
+# gremlin-javascript, gremlin-mcp, gremlint) — run npm ci at gremlin-js/, not the package dir.
+cd ~/tinkerpop/gremlin-js
 npm ci          # or `npm install` if there is no package-lock; pulls antlr4ng, duel, buffer, etc.
 ```
 
@@ -316,14 +357,23 @@ JS=~/tinkerpop-4/gremlin-js/gremlin-javascript
 RESULTS=~/cand-results/javascript     # namespaced by GLV so a JS run never collides with python/go/dotnet
 mkdir -p "$RESULTS"
 
-# branch list: baseline MUST be first
+# branch list: baseline MUST be first, then the 14 green candidates
 BRANCHES=(
   bench-baseline-javascript
-  auto/cand-javascript-readstring-direct-tostring
-  auto/cand-javascript-any-combined-header-read
-  auto/cand-javascript-sync-streamreader-primitives
-  auto/cand-javascript-flat-dispatch-table
-  auto/cand-javascript-sync-buffered-decoder
+  auto/cand-javascript-string-latin1-ascii-fastpath
+  auto/cand-javascript-array-bulk-number-counter
+  auto/cand-javascript-branchless-value-flag-switch
+  auto/cand-javascript-anyserializer-tail-return
+  auto/cand-javascript-anyserializer-hoist-and-lazy-pos
+  auto/cand-javascript-string-decode-at-offset
+  auto/cand-javascript-fuse-string-length-bytes-read
+  auto/cand-javascript-dense-dispatch-table
+  auto/cand-javascript-skip-null-parent-marker
+  auto/cand-javascript-sync-buffer-reader
+  auto/cand-javascript-element-ctor-single-default
+  auto/cand-javascript-long-bulk-safe-int-read
+  auto/cand-javascript-single-element-label-no-array
+  auto/cand-javascript-sync-decode-core-buffered
 )
 ```
 
@@ -332,12 +382,12 @@ BRANCHES=(
 ```bash
 run_arm () {
   local branch="$1" sweep="$2"
-  local tag="${branch##*/}"                 # e.g. cand-javascript-flat-dispatch-table or bench-baseline-javascript
+  local tag="${branch##*/}"                 # e.g. cand-javascript-dense-dispatch-table or bench-baseline-javascript
   local out="$RESULTS/$tag"
   mkdir -p "$out"
 
   echo "===== sweep $sweep :: $branch ====="
-  git -C "$REPO" checkout "$branch" 2>/dev/null      # 1. switch to the arm's source (a binary/internals file)
+  git -C "$REPO" checkout "$branch" 2>/dev/null      # 1. switch to the arm's source (a binary/ file)
   git -C "$REPO" log --oneline -1                    #    record exactly what we run
 
   # 2. REBUILD — JS profiling app loads the COMPILED build/, so the changed deserializer must be
@@ -372,7 +422,8 @@ Notes:
   committing to the full loop.
 - The explicit `npm run build` after each checkout is the load-bearing JS difference from the python
   doc (where the rebuild is a no-op). If it fails, the arm is invalid — fix or drop it before
-  benchmarking.
+  benchmarking. **`sync-decode-core-buffered` is the arm most likely to surface a build error** (29
+  files) — build it once by hand first if you want to de-risk the sweep.
 - All rows for an arm **append** to that arm's `ledger.csv` — re-running never overwrites.
 
 ### 4c. Run the sweeps
@@ -386,10 +437,10 @@ done 2>&1 | tee "$RESULTS/sweep-run.log"   # log it so you can detach and inspec
 git -C "$REPO" checkout bench-baseline-javascript   # leave the tree on baseline when done
 ```
 
-> **Time budget.** Unprofiled medium ≈ a couple min/cell; the full **3-sweep × 6-arm** medium+tiny
-> loop is well under a couple hours. Run under `tmux`/`screen`, kick it off, detach (`Ctrl-b d`),
-> reattach with `tmux attach`. **Never run two arms at once** — concurrent client CPU contention
-> corrupts the comparison.
+> **Time budget.** Unprofiled medium ≈ a couple min/cell; the full **3-sweep × 15-arm** medium+tiny
+> loop (baseline + 14 candidates) is a few hours. Run under `tmux`/`screen`, kick it off, detach
+> (`Ctrl-b d`), reattach with `tmux attach`. **Never run two arms at once** — concurrent client CPU
+> contention corrupts the comparison.
 
 ---
 
@@ -397,31 +448,36 @@ git -C "$REPO" checkout bench-baseline-javascript   # leave the tree on baseline
 
 ### 5·0. Publish to S3, then analyze in the notebook (preferred)
 
-The reproducible path is **`bench/auto/candidate-analysis.ipynb`** (pandas + plotly): it pulls every
-arm's `ledger.csv` from S3 and computes the **unprofiled medium-latency delta** (primary), the
-validity guards (count match, `status=ok`/`errors=0`), charts, and a PASS/FAIL verdict. From the EC2
-client, publish the results once the sweep is done:
+The reproducible path is **`bench/auto/candidate-analysis-javascript.ipynb`** (pandas + plotly): it
+pulls every arm's `ledger.csv` from S3 and computes the **unprofiled medium-latency delta** (primary),
+the validity guards (count match, `status=ok`/`errors=0`), charts, and a PASS/FAIL verdict. From the
+EC2 client, publish the results once the sweep is done:
 
 ```bash
 aws s3 sync "$RESULTS" "s3://kirill-tp-benchmarks/cand-results/javascript/" \
   --exclude "*.cpuprofile"      # V8 profiles are large + not needed by the notebook's ledger logic
 ```
 
-Then open `candidate-analysis.ipynb` anywhere with AWS creds for the bucket and set its parameters
-cell:
+Then open `candidate-analysis-javascript.ipynb` anywhere with AWS creds for the bucket. Its
+parameters cell is already set for this run:
 
 ```python
 GLV                  = 'javascript'
 BUCKET               = 'kirill-tp-benchmarks'
-PREFIX               = f'cand-results/{GLV}'          # -> cand-results/javascript
-BASELINE             = 'bench-baseline-javascript'    # the baseline arm's directory tag
-ARM_INCLUDE_PREFIXES = ('cand-javascript-',)          # funnel naming: auto/cand-javascript-<id>
+PREFIX               = f'cand-results/{GLV}'              # -> cand-results/javascript
+BASELINE             = 'bench-baseline-javascript'        # baseline arm's dir tag (= run_arm's ${branch##*/})
+ARM_INCLUDE_PREFIXES = ('cand-javascript-',)              # funnel naming: auto/cand-javascript-<id>
 ```
 
-Then **Run All**. It reproduces §5a–§5c deterministically (the notebook's optional CPU-gate parser is
-tuned for the python yappi `tsub` table — for the JS `.cpuprofile` layout, do the CPU cross-check in
-§5b by hand in speedscope; the ledger-based wall-clock + guard logic is GLV-independent and works
-as-is). The raw shell that follows is the no-Jupyter fallback / cross-check.
+> **`BASELINE` must match the baseline arm's output-dir tag.** `run_arm` tags each arm's dir with
+> `${branch##*/}`, so the baseline dir is `bench-baseline-javascript`. This is the dotnet convention
+> and differs from the earlier shallow JS run (which used a bare-SHA dir tagged `baseline`). If you
+> ever revert to a bare-SHA baseline arm, set `BASELINE='baseline'` to match.
+
+Then **Run All**. It reproduces §5a–§5c deterministically (the ledger-based wall-clock + guard logic
+is GLV-independent; for the optional JS `.cpuprofile` CPU cross-check, do §5b by hand in speedscope —
+the notebook's yappi-tuned CPU parser is python-specific). The raw shell that follows is the
+no-Jupyter fallback / cross-check.
 
 ### 5a. Unprofiled medium wall-clock median — the primary decision metric
 
@@ -478,18 +534,27 @@ candidate touched**, not noise elsewhere. A win should reproduce across all 3 sw
 ## 6. Decide & record
 
 ```
-GLV: javascript   Baseline branch (immutable fork point): bench-baseline-javascript = 5e7c118826
+GLV: javascript   Baseline branch (immutable fork point): bench-baseline-javascript = 5d575e51f8
 Medium result count (every arm must match): <record once from baseline arm — expect ~200766>
 Server: 16.59.222.63 (m7a.8xlarge, US-EAST-2)  Client: m7a.4xlarge, US-WEST-2  Node: >= 18
 
-| Arm                                            | medium med (s, UNPROFILED) | tiny med (s) | internals self drop % (optional) | medium count | risk / contract |
-|------------------------------------------------|----------------------------|--------------|----------------------------------|--------------|-----------------|
-| bench-baseline-javascript                      | (reference)                |              | —                                | <N>          | —               |
-| cand-javascript-readstring-direct-tostring     |                            |              |                                  | (must = N)   | safe / clean    |
-| cand-javascript-any-combined-header-read       |                            |              |                                  | (must = N)   | safe / clean    |
-| cand-javascript-sync-streamreader-primitives   |                            |              |                                  | (must = N)   | medium / clean  |
-| cand-javascript-flat-dispatch-table            |                            |              |                                  | (must = N)   | medium / clean  |
-| cand-javascript-sync-buffered-decoder          |                            |              |                                  | (must = N)   | high / **public-api** |
+| Arm                                              | medium med (s, UNPROFILED) | tiny med (s) | internals self drop % (optional) | medium count | blast radius |
+|--------------------------------------------------|----------------------------|--------------|----------------------------------|--------------|--------------|
+| bench-baseline-javascript                        | (reference)                |              | —                                | <N>          | —            |
+| cand-javascript-string-latin1-ascii-fastpath     |                            |              |                                  | (must = N)   | 1 file       |
+| cand-javascript-array-bulk-number-counter        |                            |              |                                  | (must = N)   | 1 file       |
+| cand-javascript-branchless-value-flag-switch     |                            |              |                                  | (must = N)   | 1 file       |
+| cand-javascript-anyserializer-tail-return        |                            |              |                                  | (must = N)   | 1 file       |
+| cand-javascript-anyserializer-hoist-and-lazy-pos |                            |              |                                  | (must = N)   | 1 file       |
+| cand-javascript-string-decode-at-offset          |                            |              |                                  | (must = N)   | 2 files      |
+| cand-javascript-fuse-string-length-bytes-read    |                            |              |                                  | (must = N)   | 2 files      |
+| cand-javascript-dense-dispatch-table             |                            |              |                                  | (must = N)   | 2 files      |
+| cand-javascript-skip-null-parent-marker          |                            |              |                                  | (must = N)   | 3 files      |
+| cand-javascript-sync-buffer-reader               |                            |              |                                  | (must = N)   | 3 files      |
+| cand-javascript-element-ctor-single-default      |                            |              |                                  | (must = N)   | 4 files      |
+| cand-javascript-long-bulk-safe-int-read          |                            |              |                                  | (must = N)   | 5 files      |
+| cand-javascript-single-element-label-no-array    |                            |              |                                  | (must = N)   | 5 files      |
+| cand-javascript-sync-decode-core-buffered        |                            |              |                                  | (must = N)   | 29 files     |
 ```
 
 - **Win** = **unprofiled medium wall-clock median improves** vs `bench-baseline-javascript` (the
@@ -498,15 +563,21 @@ Server: 16.59.222.63 (m7a.8xlarge, US-EAST-2)  Client: m7a.4xlarge, US-WEST-2  N
   `status=ok`/`errors=0` on every row. If a gate fails the arm is void regardless of latency.
 - *Optional cross-check:* a `--cpu-prof` self-time drop ≥ 5% in the same `binary/internals/` file
   **confirms attribution** but is **not required** to call a win.
-- **`sync-buffered-decoder` is the one contract-breaker (public-api).** Even if it wins, merging it is
-  a **major-version judgment call**, not a "merge now" — keep it in its own bucket. The other four are
-  contract-clean and mergeable on their own merit.
+- **`sync-decode-core-buffered` is the wide-blast-radius arm (29 files).** Even if it wins, its merge
+  is a bigger review commitment than the small arms and it overlaps almost every other candidate's hot
+  path — keep it in its own bucket and judge it on its own.
 - Each candidate is a clean single commit on `bench-baseline-javascript` — a winner merges with
-  `git merge --no-ff auto/cand-javascript-<id>`. Merge **one at a time** and re-bench; several touch
-  the same hot path (`readstring-direct-tostring` and `sync-streamreader-primitives` both touch
-  `StreamReader.js`; `any-combined-header-read`, `flat-dispatch-table`, and `sync-buffered-decoder`
-  all touch `AnySerializer.js`) so they may be **substitutes, not additive** — and
-  `sync-buffered-decoder` overlaps almost everything.
+  `git merge --no-ff auto/cand-javascript-<id>`. Merge **one at a time** and re-bench; many arms
+  touch the same hot-path files so they may be **substitutes, not additive**:
+  - `StreamReader.js`: `string-decode-at-offset`, `fuse-string-length-bytes-read`,
+    `skip-null-parent-marker`, `long-bulk-safe-int-read`, `sync-decode-core-buffered`
+  - `AnySerializer.js`: `branchless-value-flag-switch`, `anyserializer-tail-return`,
+    `anyserializer-hoist-and-lazy-pos`, `dense-dispatch-table`, `sync-decode-core-buffered`
+  - `StringSerializer.js`: `string-latin1-ascii-fastpath`, `string-decode-at-offset`,
+    `fuse-string-length-bytes-read`
+  - element ctors (`VertexSerializer`/`EdgeSerializer`/`VertexPropertySerializer`):
+    `skip-null-parent-marker`, `element-ctor-single-default`, `single-element-label-no-array`
+  - `sync-decode-core-buffered` overlaps essentially all of the above.
 
 ---
 
@@ -539,15 +610,24 @@ git -C ~/tinkerpop-4 checkout bench-baseline-javascript   # tree back on baselin
 ```bash
 # PROVISIONED BOX (Setup B): repo already at ~/tinkerpop-4, fork = `fork` remote, server = 16.59.222.63
 cd ~/tinkerpop-4 && git fetch fork
-git branch bench-baseline-javascript 5e7c118826 2>/dev/null || true
-for b in auto/cand-javascript-readstring-direct-tostring \
-         auto/cand-javascript-any-combined-header-read \
-         auto/cand-javascript-sync-streamreader-primitives \
-         auto/cand-javascript-flat-dispatch-table \
-         auto/cand-javascript-sync-buffered-decoder ; do
+git branch bench-baseline-javascript 5d575e51f8 2>/dev/null || true
+for b in auto/cand-javascript-string-latin1-ascii-fastpath \
+         auto/cand-javascript-array-bulk-number-counter \
+         auto/cand-javascript-branchless-value-flag-switch \
+         auto/cand-javascript-anyserializer-tail-return \
+         auto/cand-javascript-anyserializer-hoist-and-lazy-pos \
+         auto/cand-javascript-string-decode-at-offset \
+         auto/cand-javascript-fuse-string-length-bytes-read \
+         auto/cand-javascript-dense-dispatch-table \
+         auto/cand-javascript-skip-null-parent-marker \
+         auto/cand-javascript-sync-buffer-reader \
+         auto/cand-javascript-element-ctor-single-default \
+         auto/cand-javascript-long-bulk-safe-int-read \
+         auto/cand-javascript-single-element-label-no-array \
+         auto/cand-javascript-sync-decode-core-buffered ; do
   git branch --track "$b" "fork/$b" 2>/dev/null || true; done
 pip3.11 install --user -e ~/tinkerpop-4/bench
-( cd ~/tinkerpop-4/gremlin-js/gremlin-javascript && npm ci )     # deps once
+( cd ~/tinkerpop-4/gremlin-js && npm ci )     # deps once (workspace root, NOT the package dir)
 # server box (16.59.222.63): kill any stale 3.7 server on 8182, then start 4.0 with MODERN config:
 #   bin/gremlin-server.sh conf/gremlin-server-modern.yaml   (host: 0.0.0.0 already set)
 # verify connectivity from client (§3): npm run build, then tiny cell must return result count 6, status=ok
@@ -570,15 +650,15 @@ for s in 1 2 3; do for b in "${BRANCHES[@]}"; do run_arm "$b" "$s"; done; done
 - `EC2-BENCHMARK-CANDIDATES-TEMPLATE.md` — the language-agnostic template this file instantiates.
 - `EC2-BENCHMARK-CANDIDATES.md` — the gremlin-python worked instance.
 - `EC2-BENCHMARK-CANDIDATES-DOTNET.md` — the gremlin-dotnet worked instance (closest sibling: same
-  fork point `5e7c118826`, same "compiled GLV needs a rebuild per arm" pattern).
+  "compiled GLV needs a rebuild per arm" pattern and a real `bench-baseline-<glv>` branch).
 - `bench/README.md` — the harness: `bench run` usage, the append-only ledger, `--label` discipline,
   and the local-vs-EC2 warning this doc follows.
 - `bench/SCHEMA.md` — the `RESULT_JSON:` contract behind every ledger row.
 - `bench/matrix.yaml` — the test definitions; `protocol-overhead` medium = `times(12)`, tiny = `g.V()`.
 - `javascript-benchmarking-plan.md` (external `~/dev/tp benchmarking/`) — full two-EC2 cross-region
   setup and the `control` reference numbers in `results.csv`, plus the Node/build recipe.
-- `bench/auto/candidate-analysis.ipynb` — the reproducible pandas/plotly notebook that reads the
-  S3-published results and renders the latency delta, guards, charts, and PASS/FAIL verdict (§5·0).
+- `bench/auto/candidate-analysis-javascript.ipynb` — the reproducible pandas/plotly notebook that reads
+  the S3-published results and renders the latency delta, guards, charts, and PASS/FAIL verdict (§5·0).
   Set `GLV='javascript'`, `BASELINE='bench-baseline-javascript'`, `ARM_INCLUDE_PREFIXES=('cand-javascript-',)`.
 - `bench/auto/RUNBOOK.md` — `glv-correctness-funnel.workflow.js`, the autonomous funnel that proposed
   these candidate branches (it stops at `mvn clean install`; you benchmark the arms afterward with
