@@ -35,6 +35,18 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
     /// </summary>
     public static class StreamExtensions
     {
+        // Per-thread scratch buffer (max primitive width is 8 bytes) used to avoid a per-call
+        // heap allocation on the synchronous "buffer hit" hot path.
+        //
+        // Load-bearing invariant: the synchronous fast path must never `await` between acquiring
+        // `buf` and parsing it — otherwise another logical flow could be scheduled onto this thread
+        // and write into the shared buffer. Only the async-miss path awaits, and it detaches
+        // (`_scratch = null`) first: the pending ValueTask keeps the array privately, so a reentrant
+        // read on this pool thread lazily allocates a fresh buffer instead of clobbering the
+        // in-flight one. This is the authoritative explanation; the per-method `_scratch = null`
+        // sites refer back here.
+        [ThreadStatic] private static byte[]? _scratch;
+
         /// <summary>
         ///     Asynchronously writes a <see cref="byte"/> to a <see cref="Stream"/>.
         /// </summary>
@@ -53,17 +65,35 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="byte"/>.</returns>
-        public static async ValueTask<byte> ReadByteAsync(this Stream stream,
+        public static ValueTask<byte> ReadByteAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var readBuffer = new byte[1];
-            var bytesRead = await stream.ReadAsync(readBuffer.AsMemory(0, 1), cancellationToken)
-                .ConfigureAwait(false);
+            var buf = _scratch ??= new byte[8];
+            var read = stream.ReadAsync(buf.AsMemory(0, 1), cancellationToken);
+            if (read.IsCompletedSuccessfully)
+            {
+                if (read.Result == 0)
+                {
+                    throw new IOException("Unexpected end of stream");
+                }
+                return new ValueTask<byte>(buf[0]);
+            }
+
+            // async miss: `read` is bound to `buf`. Detach the shared buffer (see `_scratch`) so a
+            // reentrant read on this thread lazily allocates a fresh one instead of writing into
+            // our in-flight buffer; then await our pending read on the now-private array.
+            _scratch = null;
+            return AwaitByteAsync(read, buf);
+        }
+
+        private static async ValueTask<byte> AwaitByteAsync(ValueTask<int> pending, byte[] buf)
+        {
+            var bytesRead = await pending.ConfigureAwait(false);
             if (bytesRead == 0)
             {
                 throw new IOException("Unexpected end of stream");
             }
-            return readBuffer[0];
+            return buf[0];
         }
 
         /// <summary>
@@ -110,12 +140,50 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="int"/>.</returns>
-        public static async ValueTask<int> ReadIntAsync(this Stream stream,
+        public static ValueTask<int> ReadIntAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[4];
-            await stream.ReadExactlyAsync(bytes, 0, 4, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadInt32BigEndian(bytes);
+            var buf = _scratch ??= new byte[8];
+            var read = stream.ReadAsync(buf.AsMemory(0, 4), cancellationToken);
+            if (read.IsCompletedSuccessfully)
+            {
+                var n = read.Result;
+                if (n == 4)
+                {
+                    return new ValueTask<int>(BinaryPrimitives.ReadInt32BigEndian(buf.AsSpan(0, 4)));
+                }
+
+                // sync partial read (rare; e.g. at a BufferedStream refill boundary, or any stream
+                // that returns fewer bytes than requested): buffer done, continue on a private local.
+                var partial = new byte[4];
+                buf.AsSpan(0, n).CopyTo(partial);
+                return FinishIntAsync(stream, partial, n, cancellationToken);
+            }
+
+            // async miss: `read` is bound to `buf`. Detach the shared buffer (see `_scratch`) so a
+            // reentrant read on this thread lazily allocates a fresh one instead of writing into
+            // our in-flight buffer; then await our pending read on the now-private array.
+            _scratch = null;
+            return AwaitIntAsync(read, buf, stream, cancellationToken);
+        }
+
+        private static async ValueTask<int> AwaitIntAsync(ValueTask<int> pending, byte[] buf,
+            Stream stream, CancellationToken cancellationToken)
+        {
+            var n = await pending.ConfigureAwait(false);
+            if (n < 4)
+            {
+                await stream.ReadExactlyAsync(buf, n, 4 - n, cancellationToken).ConfigureAwait(false);
+            }
+            return BinaryPrimitives.ReadInt32BigEndian(buf.AsSpan(0, 4));
+        }
+
+        private static async ValueTask<int> FinishIntAsync(Stream stream, byte[] buf, int alreadyRead,
+            CancellationToken cancellationToken)
+        {
+            await stream.ReadExactlyAsync(buf, alreadyRead, 4 - alreadyRead, cancellationToken)
+                .ConfigureAwait(false);
+            return BinaryPrimitives.ReadInt32BigEndian(buf);
         }
 
         /// <summary>
@@ -138,12 +206,47 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="long"/>.</returns>
-        public static async ValueTask<long> ReadLongAsync(this Stream stream,
+        public static ValueTask<long> ReadLongAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[8];
-            await stream.ReadExactlyAsync(bytes, 0, 8, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadInt64BigEndian(bytes);
+            var buf = _scratch ??= new byte[8];
+            var read = stream.ReadAsync(buf.AsMemory(0, 8), cancellationToken);
+            if (read.IsCompletedSuccessfully)
+            {
+                var n = read.Result;
+                if (n == 8)
+                {
+                    return new ValueTask<long>(BinaryPrimitives.ReadInt64BigEndian(buf.AsSpan(0, 8)));
+                }
+
+                var partial = new byte[8];
+                buf.AsSpan(0, n).CopyTo(partial);
+                return FinishLongAsync(stream, partial, n, cancellationToken);
+            }
+
+            // async miss: `read` is bound to `buf`. Detach the shared buffer (see `_scratch`) so a
+            // reentrant read on this thread lazily allocates a fresh one; then await on the now-private array.
+            _scratch = null;
+            return AwaitLongAsync(read, buf, stream, cancellationToken);
+        }
+
+        private static async ValueTask<long> AwaitLongAsync(ValueTask<int> pending, byte[] buf,
+            Stream stream, CancellationToken cancellationToken)
+        {
+            var n = await pending.ConfigureAwait(false);
+            if (n < 8)
+            {
+                await stream.ReadExactlyAsync(buf, n, 8 - n, cancellationToken).ConfigureAwait(false);
+            }
+            return BinaryPrimitives.ReadInt64BigEndian(buf.AsSpan(0, 8));
+        }
+
+        private static async ValueTask<long> FinishLongAsync(Stream stream, byte[] buf, int alreadyRead,
+            CancellationToken cancellationToken)
+        {
+            await stream.ReadExactlyAsync(buf, alreadyRead, 8 - alreadyRead, cancellationToken)
+                .ConfigureAwait(false);
+            return BinaryPrimitives.ReadInt64BigEndian(buf);
         }
 
         /// <summary>
@@ -166,12 +269,47 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="float"/>.</returns>
-        public static async ValueTask<float> ReadFloatAsync(this Stream stream,
+        public static ValueTask<float> ReadFloatAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[4];
-            await stream.ReadExactlyAsync(bytes, 0, 4, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadSingleBigEndian(bytes);
+            var buf = _scratch ??= new byte[8];
+            var read = stream.ReadAsync(buf.AsMemory(0, 4), cancellationToken);
+            if (read.IsCompletedSuccessfully)
+            {
+                var n = read.Result;
+                if (n == 4)
+                {
+                    return new ValueTask<float>(BinaryPrimitives.ReadSingleBigEndian(buf.AsSpan(0, 4)));
+                }
+
+                var partial = new byte[4];
+                buf.AsSpan(0, n).CopyTo(partial);
+                return FinishFloatAsync(stream, partial, n, cancellationToken);
+            }
+
+            // async miss: `read` is bound to `buf`. Detach the shared buffer (see `_scratch`) so a
+            // reentrant read on this thread lazily allocates a fresh one; then await on the now-private array.
+            _scratch = null;
+            return AwaitFloatAsync(read, buf, stream, cancellationToken);
+        }
+
+        private static async ValueTask<float> AwaitFloatAsync(ValueTask<int> pending, byte[] buf,
+            Stream stream, CancellationToken cancellationToken)
+        {
+            var n = await pending.ConfigureAwait(false);
+            if (n < 4)
+            {
+                await stream.ReadExactlyAsync(buf, n, 4 - n, cancellationToken).ConfigureAwait(false);
+            }
+            return BinaryPrimitives.ReadSingleBigEndian(buf.AsSpan(0, 4));
+        }
+
+        private static async ValueTask<float> FinishFloatAsync(Stream stream, byte[] buf, int alreadyRead,
+            CancellationToken cancellationToken)
+        {
+            await stream.ReadExactlyAsync(buf, alreadyRead, 4 - alreadyRead, cancellationToken)
+                .ConfigureAwait(false);
+            return BinaryPrimitives.ReadSingleBigEndian(buf);
         }
 
         /// <summary>
@@ -194,12 +332,47 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="double"/>.</returns>
-        public static async ValueTask<double> ReadDoubleAsync(this Stream stream,
+        public static ValueTask<double> ReadDoubleAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[8];
-            await stream.ReadExactlyAsync(bytes, 0, 8, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadDoubleBigEndian(bytes);
+            var buf = _scratch ??= new byte[8];
+            var read = stream.ReadAsync(buf.AsMemory(0, 8), cancellationToken);
+            if (read.IsCompletedSuccessfully)
+            {
+                var n = read.Result;
+                if (n == 8)
+                {
+                    return new ValueTask<double>(BinaryPrimitives.ReadDoubleBigEndian(buf.AsSpan(0, 8)));
+                }
+
+                var partial = new byte[8];
+                buf.AsSpan(0, n).CopyTo(partial);
+                return FinishDoubleAsync(stream, partial, n, cancellationToken);
+            }
+
+            // async miss: `read` is bound to `buf`. Detach the shared buffer (see `_scratch`) so a
+            // reentrant read on this thread lazily allocates a fresh one; then await on the now-private array.
+            _scratch = null;
+            return AwaitDoubleAsync(read, buf, stream, cancellationToken);
+        }
+
+        private static async ValueTask<double> AwaitDoubleAsync(ValueTask<int> pending, byte[] buf,
+            Stream stream, CancellationToken cancellationToken)
+        {
+            var n = await pending.ConfigureAwait(false);
+            if (n < 8)
+            {
+                await stream.ReadExactlyAsync(buf, n, 8 - n, cancellationToken).ConfigureAwait(false);
+            }
+            return BinaryPrimitives.ReadDoubleBigEndian(buf.AsSpan(0, 8));
+        }
+
+        private static async ValueTask<double> FinishDoubleAsync(Stream stream, byte[] buf, int alreadyRead,
+            CancellationToken cancellationToken)
+        {
+            await stream.ReadExactlyAsync(buf, alreadyRead, 8 - alreadyRead, cancellationToken)
+                .ConfigureAwait(false);
+            return BinaryPrimitives.ReadDoubleBigEndian(buf);
         }
 
         /// <summary>
@@ -222,12 +395,47 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="short"/>.</returns>
-        public static async ValueTask<short> ReadShortAsync(this Stream stream,
+        public static ValueTask<short> ReadShortAsync(this Stream stream,
             CancellationToken cancellationToken = default)
         {
-            var bytes = new byte[2];
-            await stream.ReadExactlyAsync(bytes, 0, 2, cancellationToken).ConfigureAwait(false);
-            return BinaryPrimitives.ReadInt16BigEndian(bytes);
+            var buf = _scratch ??= new byte[8];
+            var read = stream.ReadAsync(buf.AsMemory(0, 2), cancellationToken);
+            if (read.IsCompletedSuccessfully)
+            {
+                var n = read.Result;
+                if (n == 2)
+                {
+                    return new ValueTask<short>(BinaryPrimitives.ReadInt16BigEndian(buf.AsSpan(0, 2)));
+                }
+
+                var partial = new byte[2];
+                buf.AsSpan(0, n).CopyTo(partial);
+                return FinishShortAsync(stream, partial, n, cancellationToken);
+            }
+
+            // async miss: `read` is bound to `buf`. Detach the shared buffer (see `_scratch`) so a
+            // reentrant read on this thread lazily allocates a fresh one; then await on the now-private array.
+            _scratch = null;
+            return AwaitShortAsync(read, buf, stream, cancellationToken);
+        }
+
+        private static async ValueTask<short> AwaitShortAsync(ValueTask<int> pending, byte[] buf,
+            Stream stream, CancellationToken cancellationToken)
+        {
+            var n = await pending.ConfigureAwait(false);
+            if (n < 2)
+            {
+                await stream.ReadExactlyAsync(buf, n, 2 - n, cancellationToken).ConfigureAwait(false);
+            }
+            return BinaryPrimitives.ReadInt16BigEndian(buf.AsSpan(0, 2));
+        }
+
+        private static async ValueTask<short> FinishShortAsync(Stream stream, byte[] buf, int alreadyRead,
+            CancellationToken cancellationToken)
+        {
+            await stream.ReadExactlyAsync(buf, alreadyRead, 2 - alreadyRead, cancellationToken)
+                .ConfigureAwait(false);
+            return BinaryPrimitives.ReadInt16BigEndian(buf);
         }
 
         /// <summary>
