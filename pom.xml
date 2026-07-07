@@ -570,6 +570,8 @@ limitations under the License.
                         <exclude>**/go.sum</exclude>
                         <exclude>**/coverage.out</exclude>
                         <exclude>**/gremlinconsoletest.egg-info/**</exclude>
+                        <exclude>**/*.egg-info/**</exclude>
+                        <exclude>**/*.ipynb</exclude>
                         <!-- SKILL.md requires frontmatter at very start of file so that precludes use of the license header -->
                         <exclude>**/.skills/**/SKILL.md</exclude>
                     </excludes>

@@ -53,8 +53,19 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="byte"/>.</returns>
-        public static async ValueTask<byte> ReadByteAsync(this Stream stream,
+        // Dispatch note (applies to every Read*Async below): only the per-response GraphBinary read
+        // stream is wrapped in a GraphBinaryReadBuffer, whose ReadXValueAsync methods serve fixed-width
+        // primitives straight from the internal buffer (zero-copy fast path). Any other Stream — e.g. a
+        // MemoryStream in tests, or an unbuffered caller — takes the plain per-call async fallback, which
+        // allocates a small scratch buffer and reads exactly the required bytes.
+        public static ValueTask<byte> ReadByteAsync(this Stream stream,
             CancellationToken cancellationToken = default)
+            => stream is GraphBinaryReadBuffer b
+                ? b.ReadByteValueAsync(cancellationToken)
+                : ReadByteFallbackAsync(stream, cancellationToken);
+
+        private static async ValueTask<byte> ReadByteFallbackAsync(Stream stream,
+            CancellationToken cancellationToken)
         {
             var readBuffer = new byte[1];
             var bytesRead = await stream.ReadAsync(readBuffer.AsMemory(0, 1), cancellationToken)
@@ -110,8 +121,14 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="int"/>.</returns>
-        public static async ValueTask<int> ReadIntAsync(this Stream stream,
+        public static ValueTask<int> ReadIntAsync(this Stream stream,
             CancellationToken cancellationToken = default)
+            => stream is GraphBinaryReadBuffer b
+                ? b.ReadIntValueAsync(cancellationToken)
+                : ReadIntFallbackAsync(stream, cancellationToken);
+
+        private static async ValueTask<int> ReadIntFallbackAsync(Stream stream,
+            CancellationToken cancellationToken)
         {
             var bytes = new byte[4];
             await stream.ReadExactlyAsync(bytes, 0, 4, cancellationToken).ConfigureAwait(false);
@@ -138,8 +155,14 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="long"/>.</returns>
-        public static async ValueTask<long> ReadLongAsync(this Stream stream,
+        public static ValueTask<long> ReadLongAsync(this Stream stream,
             CancellationToken cancellationToken = default)
+            => stream is GraphBinaryReadBuffer b
+                ? b.ReadLongValueAsync(cancellationToken)
+                : ReadLongFallbackAsync(stream, cancellationToken);
+
+        private static async ValueTask<long> ReadLongFallbackAsync(Stream stream,
+            CancellationToken cancellationToken)
         {
             var bytes = new byte[8];
             await stream.ReadExactlyAsync(bytes, 0, 8, cancellationToken).ConfigureAwait(false);
@@ -166,8 +189,14 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="float"/>.</returns>
-        public static async ValueTask<float> ReadFloatAsync(this Stream stream,
+        public static ValueTask<float> ReadFloatAsync(this Stream stream,
             CancellationToken cancellationToken = default)
+            => stream is GraphBinaryReadBuffer b
+                ? b.ReadFloatValueAsync(cancellationToken)
+                : ReadFloatFallbackAsync(stream, cancellationToken);
+
+        private static async ValueTask<float> ReadFloatFallbackAsync(Stream stream,
+            CancellationToken cancellationToken)
         {
             var bytes = new byte[4];
             await stream.ReadExactlyAsync(bytes, 0, 4, cancellationToken).ConfigureAwait(false);
@@ -194,8 +223,14 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="double"/>.</returns>
-        public static async ValueTask<double> ReadDoubleAsync(this Stream stream,
+        public static ValueTask<double> ReadDoubleAsync(this Stream stream,
             CancellationToken cancellationToken = default)
+            => stream is GraphBinaryReadBuffer b
+                ? b.ReadDoubleValueAsync(cancellationToken)
+                : ReadDoubleFallbackAsync(stream, cancellationToken);
+
+        private static async ValueTask<double> ReadDoubleFallbackAsync(Stream stream,
+            CancellationToken cancellationToken)
         {
             var bytes = new byte[8];
             await stream.ReadExactlyAsync(bytes, 0, 8, cancellationToken).ConfigureAwait(false);
@@ -222,8 +257,14 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
         /// <param name="stream">The <see cref="Stream"/> to read from.</param>
         /// <param name="cancellationToken">The token to cancel the operation. The default value is None.</param>
         /// <returns>The read <see cref="short"/>.</returns>
-        public static async ValueTask<short> ReadShortAsync(this Stream stream,
+        public static ValueTask<short> ReadShortAsync(this Stream stream,
             CancellationToken cancellationToken = default)
+            => stream is GraphBinaryReadBuffer b
+                ? b.ReadShortValueAsync(cancellationToken)
+                : ReadShortFallbackAsync(stream, cancellationToken);
+
+        private static async ValueTask<short> ReadShortFallbackAsync(Stream stream,
+            CancellationToken cancellationToken)
         {
             var bytes = new byte[2];
             await stream.ReadExactlyAsync(bytes, 0, 2, cancellationToken).ConfigureAwait(false);
