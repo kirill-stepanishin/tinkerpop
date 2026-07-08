@@ -183,9 +183,10 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
 
         private void Refill()
         {
-            // Read into a local first and commit _start/_end only on success, so a throwing
-            // underlying read leaves the buffer invariant intact rather than in a state that
-            // would replay already-consumed bytes.
+            // Refill is only entered when the buffer is empty (_start == _end), so overwriting _buffer
+            // discards nothing unconsumed. Commit _start/_end only after the read succeeds: a throwing
+            // underlying read then leaves the indices untouched rather than in a state that would replay
+            // already-consumed bytes.
             var bytesRead = _stream.Read(_buffer, 0, _buffer.Length);
             _start = 0;
             _end = bytesRead;

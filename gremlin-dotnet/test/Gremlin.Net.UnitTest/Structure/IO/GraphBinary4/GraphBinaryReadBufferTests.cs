@@ -883,12 +883,15 @@ namespace Gremlin.Net.UnitTest.Structure.IO.GraphBinary4
         }
 
         [Theory]
-        [InlineData(4)]   // buffer far smaller than the string payload
+        [InlineData(4)]   // chunk far smaller than the string payload
         [InlineData(8)]
         [InlineData(16)]
-        public async Task ResponseSerializerShouldDeserializeStringLargerThanBuffer(int bufferSize)
+        public async Task ResponseSerializerShouldDeserializeStringLargerThanBuffer(int chunkSize)
         {
-            // A string whose UTF-8 length exceeds bufferSize forces the payload to span multiple refills.
+            // A string whose UTF-8 length far exceeds the drip chunk size forces the payload to span
+            // multiple refills. Feed it through a DripStream (not a pre-wrapped GraphBinaryReadBuffer)
+            // so the chunk size directly controls the refill granularity of the buffer that
+            // ResponseSerializer creates internally.
             var value = new string('x', 100);
             var payload = BuildNonBulkedStringResponse(value);
             var reader = new GraphBinaryReader();
@@ -896,7 +899,7 @@ namespace Gremlin.Net.UnitTest.Structure.IO.GraphBinary4
 
             var results = new List<object>();
             await foreach (var item in serializer.ReadStreamingAsync(
-                new GraphBinaryReadBuffer(new MemoryStream(payload), bufferSize), reader))
+                new DripStream(payload, chunkSize), reader))
             {
                 results.Add(item);
             }
@@ -924,6 +927,106 @@ namespace Gremlin.Net.UnitTest.Structure.IO.GraphBinary4
             }
 
             Assert.Equal(values, results);
+        }
+
+        // CharSerializer reads a multi-byte UTF-8 char as (leading byte) + ReadExactlyAsync(remaining).
+        // With a 1-byte drip the continuation bytes land after a refill, so a non-looping read on that
+        // branch would truncate the char. Char is a distinct type code (0x80) routed to CharSerializer,
+        // so this covers the CharSerializer.cs fix that the String tests do not reach.
+        private static byte[] BuildNonBulkedCharResponse(params char[] values)
+        {
+            using var ms = new MemoryStream();
+            ms.WriteByte(0x84); // version
+            ms.WriteByte(0x00); // bulked = false
+            var scratch = new byte[4];
+            foreach (var value in values)
+            {
+                ms.WriteByte(0x80); // DataType.Char
+                ms.WriteByte(0x00); // value_flag = not null
+                var utf8 = Encoding.UTF8.GetBytes(value.ToString());
+                ms.Write(utf8, 0, utf8.Length); // Char has no length prefix; leading byte encodes width
+            }
+            ms.WriteByte(0xFD);
+            ms.WriteByte(0x00);
+            ms.WriteByte(0x00);
+            BinaryPrimitives.WriteInt32BigEndian(scratch, 200);
+            ms.Write(scratch, 0, 4);
+            ms.WriteByte(0x01);
+            ms.WriteByte(0x01);
+            return ms.ToArray();
+        }
+
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        public async Task ResponseSerializerShouldDeserializeMultiByteCharsAcrossRefills(int chunkSize)
+        {
+            // 'a' (1 byte), 'τ' (2 bytes, U+03C4), '€' (3 bytes, U+20AC) — exercises the 2- and 3-byte
+            // CharSerializer branches whose continuation bytes straddle a refill under a tiny drip chunk.
+            var values = new[] { 'a', 'τ', '€' };
+            var payload = BuildNonBulkedCharResponse(values);
+            var reader = new GraphBinaryReader();
+            var serializer = new ResponseSerializer();
+
+            var results = new List<object>();
+            await foreach (var item in serializer.ReadStreamingAsync(new DripStream(payload, chunkSize), reader))
+            {
+                results.Add(item);
+            }
+
+            Assert.Equal(new object[] { 'a', 'τ', '€' }, results);
+        }
+
+        // BinarySerializer (byte[]) uses the same ReadExactlyAsync(length) fix as StringSerializer; a
+        // large byte[] straddling refills directly covers BinarySerializer.cs.
+        private static byte[] BuildNonBulkedBinaryResponse(params byte[][] values)
+        {
+            using var ms = new MemoryStream();
+            ms.WriteByte(0x84); // version
+            ms.WriteByte(0x00); // bulked = false
+            var scratch = new byte[4];
+            foreach (var value in values)
+            {
+                ms.WriteByte(0x25); // DataType.Binary
+                ms.WriteByte(0x00); // value_flag = not null
+                BinaryPrimitives.WriteInt32BigEndian(scratch, value.Length);
+                ms.Write(scratch, 0, 4);
+                ms.Write(value, 0, value.Length);
+            }
+            ms.WriteByte(0xFD);
+            ms.WriteByte(0x00);
+            ms.WriteByte(0x00);
+            BinaryPrimitives.WriteInt32BigEndian(scratch, 200);
+            ms.Write(scratch, 0, 4);
+            ms.WriteByte(0x01);
+            ms.WriteByte(0x01);
+            return ms.ToArray();
+        }
+
+        [Theory]
+        [InlineData(1)]
+        [InlineData(3)]
+        [InlineData(7)]
+        public async Task ResponseSerializerShouldDeserializeByteArrayLargerThanBuffer(int chunkSize)
+        {
+            var value = new byte[100];
+            for (var i = 0; i < value.Length; i++)
+            {
+                value[i] = (byte)(i + 1); // non-zero so silent truncation (zero-fill) would be caught
+            }
+            var payload = BuildNonBulkedBinaryResponse(value);
+            var reader = new GraphBinaryReader();
+            var serializer = new ResponseSerializer();
+
+            var results = new List<object>();
+            await foreach (var item in serializer.ReadStreamingAsync(new DripStream(payload, chunkSize), reader))
+            {
+                results.Add(item);
+            }
+
+            var single = Assert.Single(results);
+            Assert.Equal(value, Assert.IsType<byte[]>(single));
         }
 
         // --- 15. Constructor argument validation ---
