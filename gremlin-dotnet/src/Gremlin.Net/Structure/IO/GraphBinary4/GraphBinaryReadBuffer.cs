@@ -183,15 +183,21 @@ namespace Gremlin.Net.Structure.IO.GraphBinary4
 
         private void Refill()
         {
+            // Read into a local first and commit _start/_end only on success, so a throwing
+            // underlying read leaves the buffer invariant intact rather than in a state that
+            // would replay already-consumed bytes.
+            var bytesRead = _stream.Read(_buffer, 0, _buffer.Length);
             _start = 0;
-            _end = _stream.Read(_buffer, 0, _buffer.Length);
+            _end = bytesRead;
         }
 
         private async ValueTask RefillAsync(CancellationToken cancellationToken)
         {
-            _start = 0;
-            _end = await _stream.ReadAsync(_buffer.AsMemory(0, _buffer.Length), cancellationToken)
+            // See Refill(): commit _start/_end only after the read completes successfully.
+            var bytesRead = await _stream.ReadAsync(_buffer.AsMemory(0, _buffer.Length), cancellationToken)
                 .ConfigureAwait(false);
+            _start = 0;
+            _end = bytesRead;
         }
 
         // --- Zero-copy primitive readers ---

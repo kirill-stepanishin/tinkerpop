@@ -25,6 +25,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Gremlin.Net.Structure.IO.GraphBinary4;
@@ -843,6 +844,151 @@ namespace Gremlin.Net.UnitTest.Structure.IO.GraphBinary4
 
             Assert.Equal(new object[] { 1, 2, 3, 42, -7, int.MaxValue, int.MinValue }, baseline);
             Assert.Equal(baseline, dripped);
+        }
+
+        // --- 14. Multi-byte value straddling a refill boundary (short-read regression guard) ---
+        //
+        // A general Read/ReadAsync legitimately returns only what is currently buffered, so a value read
+        // (e.g. a string) that straddles the internal refill boundary comes back in more than one chunk.
+        // Consumers that issue a single non-looping stream.ReadAsync(bytes, offset, count) and ignore the
+        // returned count would silently truncate the value and desynchronize the parser. These tests build
+        // a real GraphBinary String response whose payload crosses the buffer boundary and assert it still
+        // round-trips end-to-end through ResponseSerializer.
+
+        private static byte[] BuildNonBulkedStringResponse(params string[] values)
+        {
+            using var ms = new MemoryStream();
+            ms.WriteByte(0x84); // version
+            ms.WriteByte(0x00); // bulked = false
+            var scratch = new byte[4];
+            foreach (var value in values)
+            {
+                ms.WriteByte(0x03); // DataType.String
+                ms.WriteByte(0x00); // value_flag = not null
+                var utf8 = Encoding.UTF8.GetBytes(value);
+                BinaryPrimitives.WriteInt32BigEndian(scratch, utf8.Length);
+                ms.Write(scratch, 0, 4);
+                ms.Write(utf8, 0, utf8.Length);
+            }
+            // Marker
+            ms.WriteByte(0xFD);
+            ms.WriteByte(0x00);
+            ms.WriteByte(0x00);
+            // Status footer: 200, null message, null exception
+            BinaryPrimitives.WriteInt32BigEndian(scratch, 200);
+            ms.Write(scratch, 0, 4);
+            ms.WriteByte(0x01);
+            ms.WriteByte(0x01);
+            return ms.ToArray();
+        }
+
+        [Theory]
+        [InlineData(4)]   // buffer far smaller than the string payload
+        [InlineData(8)]
+        [InlineData(16)]
+        public async Task ResponseSerializerShouldDeserializeStringLargerThanBuffer(int bufferSize)
+        {
+            // A string whose UTF-8 length exceeds bufferSize forces the payload to span multiple refills.
+            var value = new string('x', 100);
+            var payload = BuildNonBulkedStringResponse(value);
+            var reader = new GraphBinaryReader();
+            var serializer = new ResponseSerializer();
+
+            var results = new List<object>();
+            await foreach (var item in serializer.ReadStreamingAsync(
+                new GraphBinaryReadBuffer(new MemoryStream(payload), bufferSize), reader))
+            {
+                results.Add(item);
+            }
+
+            Assert.Equal(new object[] { value }, results);
+        }
+
+        [Theory]
+        [InlineData(1)]
+        [InlineData(3)]
+        [InlineData(7)]
+        public async Task ResponseSerializerShouldDeserializeStringsAcrossFragmentedDripStream(int chunkSize)
+        {
+            // Multiple strings of varying lengths, delivered a few bytes at a time through a non-seekable
+            // stream, so almost every value straddles a refill boundary.
+            var values = new[] { "", "a", "hello world", new string('z', 50), "τ" };
+            var payload = BuildNonBulkedStringResponse(values);
+            var reader = new GraphBinaryReader();
+            var serializer = new ResponseSerializer();
+
+            var results = new List<object>();
+            await foreach (var item in serializer.ReadStreamingAsync(new DripStream(payload, chunkSize), reader))
+            {
+                results.Add(item);
+            }
+
+            Assert.Equal(values, results);
+        }
+
+        // --- 15. Constructor argument validation ---
+
+        [Fact]
+        public void ConstructorShouldThrowOnNullStream()
+        {
+            Assert.Throws<ArgumentNullException>(() => new GraphBinaryReadBuffer(null!));
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        public void ConstructorShouldThrowOnNonPositiveBufferSize(int bufferSize)
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => new GraphBinaryReadBuffer(new MemoryStream(), bufferSize));
+        }
+
+        // --- 16. Zero-length read early-return ---
+
+        [Fact]
+        public async Task ReadAsyncEmptyBufferShouldReturnZeroWithoutConsuming()
+        {
+            var buffer = Buffer(new byte[] { 0xAB });
+
+            Assert.Equal(0, await buffer.ReadAsync(Array.Empty<byte>(), 0, 0));
+
+            // The single available byte must be untouched by the zero-length read.
+            Assert.Equal(0xAB, await buffer.ReadByteValueAsync());
+        }
+
+        [Fact]
+        public void ReadEmptySpanShouldReturnZeroWithoutConsuming()
+        {
+            var buffer = Buffer(new byte[] { 0xAB });
+
+            Assert.Equal(0, buffer.Read(Span<byte>.Empty));
+
+            var one = new byte[1];
+            Assert.Equal(1, buffer.Read(one));
+            Assert.Equal(0xAB, one[0]);
+        }
+
+        // --- 17. General ReadAsync(count) then a primitive that straddles a refill ---
+        //
+        // The reverse of ReadAsyncCountShouldConsumeAfterPrimitiveReads: a general read leaves the buffer
+        // partially consumed at a non-zero _start, and the following fixed-width primitive read must span
+        // from that mid-buffer offset across a refill. Exercises the _start/_end accounting most prone to
+        // off-by-one.
+
+        [Fact]
+        public async Task PrimitiveReadShouldBeCorrectAfterGeneralReadLeavesPartialBuffer()
+        {
+            using var ms = new MemoryStream();
+            ms.Write(new byte[] { 0x0A, 0x0B, 0x0C }, 0, 3);
+            var scratch = new byte[8];
+            BinaryPrimitives.WriteInt64BigEndian(scratch, 0x1122334455667788L);
+            ms.Write(scratch, 0, 8);
+
+            // Small buffer + drip so the long straddles refills starting from a non-zero _start.
+            var buffer = new GraphBinaryReadBuffer(new DripStream(ms.ToArray(), 2), 4);
+
+            Assert.Equal(new byte[] { 0x0A, 0x0B, 0x0C }, await buffer.ReadAsync(3));
+            Assert.Equal(0x1122334455667788L, await buffer.ReadLongValueAsync());
         }
     }
 }
