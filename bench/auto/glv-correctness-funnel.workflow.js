@@ -33,13 +33,13 @@ export const meta = {
   description: 'GLV-parameterized: discover, implement, review and gate (unit+integration+feature tests) ' +
       'performance optimizations; each survivor on its own branch for the operator to benchmark + merge',
   phases: [
-    { title: 'Setup',       detail: 'light: confirm toolchain + clean tree (NO server, NO baseline)' },
+    { title: 'Setup',       detail: 'confirm toolchain + clean tree, then distil the profile into a hotspot digest', model: 'opus' },
     { title: 'Research',    detail: 'derive lenses from the hotspot digest, then generate ideas one agent per lens', model: 'opus' },
     { title: 'Investigate', detail: 'deep per-candidate study; ruthless prune; two-tier invariant classification', model: 'opus' },
-    { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', },
+    { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', model: 'sonnet (opus for restructure/high-ceiling)' },
     { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'opus' },
-    { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'opus' },
-    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', },
+    { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'sonnet' },
+    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'haiku' },
   ],
 }
 
@@ -346,7 +346,7 @@ Record the directory you actually read in 'profileDir'. If you cannot find profi
 or they are unreadable, set profileFound=false AND ok=false with an abortReason saying so — without a
 profile this pipeline has no hotspots to work from and MUST NOT proceed on guesswork.
 Return ONLY the structured object.`,
-  { phase: 'Setup', schema: SETUP })
+  { phase: 'Setup', schema: SETUP, model: 'opus' })
 
 if (!rig || !rig.ok) { log(`ABORT: setup — ${rig && rig.abortReason}`); return { aborted: true, glv: GLV, reason: (rig && rig.abortReason) || 'setup failed', rig } }
 if (!rig.profileFound || !rig.profileDigest) {
@@ -445,7 +445,7 @@ Synthesize a deduped PORTFOLIO of at most ${MAX_RESEARCH_CANDS} candidates:
   branch and we NEVER combine them. Two candidates may touch the same file — fine.
 - Assign a unique kebab id.
 Return ONLY the structured object.`,
-  { phase: 'Research', label: 'research:synthesize', schema: PORTFOLIO, model: 'opus' })
+  { phase: 'Research', label: 'research:synthesize', schema: PORTFOLIO, model: 'sonnet' })
 
 let candidates = (portfolio.items || []).slice(0, MAX_RESEARCH_CANDS)
 if (!candidates.length) return { error: 'no candidates from research', glv: GLV, allIdeas }
@@ -517,7 +517,8 @@ RULES:
   unitGreen=false and explain. Report repairAttempts and diffStat (git diff --stat vs ${BASE}).
 Return ONLY the structured object.`,
     { phase: 'Implement', label: `impl:${c.id}`, isolation: 'worktree', schema: BUILD,
-      model: (c.riskTier === 'restructure' || c.riskTier === 'high-ceiling') ? 'opus' : undefined }),
+      // Local edits are Sonnet work; the big rewrites get Opus.
+      model: (c.riskTier === 'restructure' || c.riskTier === 'high-ceiling') ? 'opus' : 'sonnet' }),
   (b, c) => {
     if (!b || !b.unitGreen) { log(`DROP ${c.id}: unit gate (${b && b.summary})`); return null }
     if (b.touchedTests) { log(`DROP ${c.id}: modified tests`); return null }
@@ -582,13 +583,18 @@ a single call on it; poll with short status checks so progress is visible). Only
 so the fixed docker host ports the suite binds (e.g. 45940-45943 / 4588 / 8182, per GLV) are free.
 
 STEP 4 — PROVE THE SUITE ACTUALLY RAN (false-green guard): the proof for ${G.label} is: ${G.suiteProof}.
-Set suiteRan=true ONLY if you saw that evidence (and capture the concrete test/feature counts in summary);
-otherwise set suiteRan=false, fullSuiteGreen=false and go back to STEP 2 (suite activation) — or STEP 1 if the failure was a missing build context.
+Set suiteRan=true ONLY if you saw that evidence with your own eyes in the build log, and QUOTE the lines that
+show it in summary — the actual counts/container lines, not a paraphrase. If you cannot quote them, you did
+not see them: set suiteRan=false, fullSuiteGreen=false and go back to STEP 2 (suite activation) — or STEP 1
+if the failure was a missing build context. A BUILD SUCCESS is NOT itself evidence; do not infer the suite
+ran because the build passed, and never assume it ran because it was supposed to.
 
 CODE-REPAIR: if it fails on a CODE bug, you MAY fix YOUR OWN code (NEVER a test) and retry up to
 ${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGreen=true ONLY on a real BUILD
 SUCCESS with suiteRan=true. On failure capture the failing test/section in failTail. Return ONLY the object.`,
-    { phase: 'Correctness', label: `mvn:${c.id}`, schema: MVN, model: 'opus' })
+    // Mostly recipe-execution and polling; the one judgment (suiteRan) is pinned to
+    // quotable log evidence, and the script re-checks it structurally below.
+    { phase: 'Correctness', label: `mvn:${c.id}`, schema: MVN, model: 'sonnet' })
   if (m && m.fullSuiteGreen && m.suiteRan === false) {
     log(`DROP ${c.id}: mvn gate reported green but suiteRan=false (suite-not-activated false-green) — ${m.summary}`); continue
   }
@@ -615,7 +621,7 @@ write a concise imperative commit subject (<=50 chars, capitalized, no trailing 
 conventional-commit prefix). Keep the diff PURE.
 Report branch, clean (single-purpose vs ${BASE}), diffStat, commitMessage, and benchmarkHint (what the
 operator should measure to confirm this change actually improves performance). Return ONLY the object.`,
-  { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE })
+  { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE, model: 'haiku' })
   .then(f => ({ ...x, final: f }))))
 
 const enrich = (x) => ({
