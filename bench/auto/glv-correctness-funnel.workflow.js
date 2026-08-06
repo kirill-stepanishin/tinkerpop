@@ -46,8 +46,7 @@
 // `meta` must be the first statement and a pure literal.
 export const meta = {
   name: 'glv-correctness-funnel',
-  description: 'GLV-parameterized: discover, implement, review and gate (unit+integration+feature tests) ' +
-      'performance optimizations; each survivor on its own branch for the operator to benchmark + merge',
+  description: 'GLV-parameterized: discover, implement, review and gate (unit+integration+feature tests) performance optimizations; each survivor on its own branch for the operator to benchmark + merge',
   phases: [
     { title: 'Setup',       detail: 'confirm toolchain + clean tree, then distil the profile into a hotspot digest', model: 'opus' },
     { title: 'Research',    detail: 'derive lenses from the hotspot digest, then generate ideas one agent per lens', model: 'opus' },
