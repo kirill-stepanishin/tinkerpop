@@ -2,51 +2,39 @@
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file. Apache License 2.0.
  *
- * ============================================================================
- *  GLV CORRECTNESS FUNNEL  —  autonomous, GLV-parameterized discovery pipeline
- *  for GraphBinary deserialization optimizations, gated up to `mvn clean install`.
- * ============================================================================
+ * GLV CORRECTNESS FUNNEL — an autonomous, GLV-parameterized pipeline that discovers,
+ * implements, reviews and test-gates GraphBinary deserialization optimizations for a
+ * Gremlin Language Variant. Run it with the Claude Code `Workflow` tool:
  *
- *  Run with the Claude Code `Workflow` tool (background + resumable):
- *    Workflow({ scriptPath: ".../bench/auto/glv-correctness-funnel.workflow.js",
- *               args: { glv: "python" } })          // or { glv: "go" }, { glv: "dotnet" }, { glv: "javascript" }
+ *   Workflow({ scriptPath: "bench/auto/glv-correctness-funnel.workflow.js",
+ *              args: { glv: "python",              // or "go" | "dotnet" | "javascript"
+ *                      profileRoot: "<dir>" } })   // REQUIRED: stored profiling results
  *
- *  SCOPE (deliberate): this pipeline goes ONLY as far as a green `mvn clean install`
- *  (unit + integration + feature/radish). It does NOT benchmark or profile — the
- *  OPERATOR does that manually, per branch, afterwards. So the deliverable is not
- *  "proven faster" but "a plausible optimization that compiles and passes the FULL
- *  test suite, reviewed and isolated on its own branch — ready for your benchmark."
+ * Both args are required. Setup locates this GLV's profiles under profileRoot, works out
+ * which profiler produced them, and distils a ranked hotspot digest that is the ONLY
+ * hotspot input the pipeline has. Nothing about where the time goes — no ranking, no
+ * filename, no measurement — is hardcoded here. No profile, no run.
  *
- *  Because there is no profiling, the only GLV-specific organ that used to make a
- *  single script impossible (yappi-vs-pprof, deterministic-vs-sampling gate) is gone.
- *  What remains differs per GLV in just a few places, captured in GLV_REGISTRY below.
+ * It stops at a green `mvn clean install` (unit + integration + feature) and never
+ * benchmarks. The deliverable is therefore not "proven faster" but "a plausible
+ * optimization that passes the FULL suite, reviewed, alone on branch
+ * auto/cand-<glv>-<id>, ready for the operator to measure". Survivors are bucketed
+ * into `passed` (no contract break) and `breaksContract` (public-API or
+ * custom-serializer change — a human call). Nothing is merged, combined, or pushed.
  *
- *  DELIVERABLE: each survivor is its OWN branch auto/cand-<glv>-<id>, sorted into:
- *    - passed          : green, no contract break        -> benchmark, then merge
- *    - breaksContract  : green, but changes public-API / custom-serializer contract
- *                        -> your major-version judgment call (benchmark first)
- *  Nothing is merged, combined, or pushed. The OPERATOR benchmarks + merges.
- *
- *  Invariants (WHY they matter with no benchmark gate): a green test suite proves
- *  only what the tests check. It does NOT prove streaming still streams, memory stays
- *  bounded, the public API is intact, or custom serializers still load — unless a test
- *  happens to assert exactly that. With profiling removed, the test suite + this
- *  invariant guard are the ONLY automated checks, so the invariant review is the load-
- *  bearing thing standing between "tests pass" and "actually correct". Two tiers:
- *    HARD (auto-prune): correctness/safety contracts that are never worth trading for speed.
- *    SOFT (flag, don't kill): compatibility contracts that MIGHT be worth a major version
- *                             -> surfaced in the breaksContract bucket for the human.
+ * Invariants carry the weight precisely BECAUSE there is no benchmark gate: a green
+ * suite proves only what the tests assert, not that streaming still streams. HARD
+ * invariants auto-prune a candidate; SOFT ones only flag it for the human.
  */
 
-// NOTE: the Workflow harness requires `export const meta` to be the FIRST statement,
-// and it must be a pure literal. It is hoisted here, above the GLV registry and the
-// GLV resolution below, for that reason.
+// `meta` must be the first statement and a pure literal.
 export const meta = {
   name: 'glv-correctness-funnel',
-  description: 'GLV-parameterized: discover, implement, review and gate (mvn clean install incl. integration+feature) GraphBinary deser optimizations; each survivor on its own branch for the operator to benchmark + merge. No benchmarking/profiling in-workflow.',
+  description: 'GLV-parameterized: discover, implement, review and gate (unit+integration+feature tests) ' +
+      'performance optimizations; each survivor on its own branch for the operator to benchmark + merge',
   phases: [
     { title: 'Setup',       detail: 'light: confirm toolchain + clean tree (NO server, NO baseline)' },
-    { title: 'Research',    detail: 'wide diverse-lens idea generation (tiny tweaks -> big refactors)', model: 'opus' },
+    { title: 'Research',    detail: 'derive lenses from the hotspot digest, then generate ideas one agent per lens', model: 'opus' },
     { title: 'Investigate', detail: 'deep per-candidate study; ruthless prune; two-tier invariant classification', model: 'opus' },
     { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', },
     { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'opus' },
@@ -61,42 +49,23 @@ export const meta = {
 const GLV_REGISTRY = {
   python: {
     label: 'gremlin-python',
-    module: 'gremlin-python',                                  // dir holding pom.xml for the mvn gate
-    sourceSubdir: 'gremlin-python/src/main/python',            // where unit tests + source live
-    // Python's editable install resolves to the ORIGINAL tree, so a worktree's pytest
-    // must point PYTHONPATH at ITS OWN source to test the candidate's code, not the original.
+    module: 'gremlin-python',                        // holds the pom.xml for the mvn gate
+    sourceSubdir: 'gremlin-python/src/main/python',  // source + unit tests
+    // An editable install resolves to the ORIGINAL tree, so PYTHONPATH must point at the
+    // worktree's own source or pytest tests the original code, not the candidate's.
     unitTest: (py) => `cd <worktree>/gremlin-python/src/main/python && ` +
       `PYTHONPATH="$(pwd)" ${py} -m pytest tests/unit/structure/io/ tests/unit/driver/test_http_streaming.py -q`,
     unitToolDesc: 'pytest (no server)',
-    // What the .glv-activated mvn gate runs, and the log signal that PROVES it actually ran
-    // (vs a seconds-long no-op false green). Injected into the gate prompt's STEP 1/STEP 3.
+    // What the gated suite runs, and the log evidence proving it ran (vs a no-op false green).
     suiteDesc: 'pytest integration (~347 tests, no-server unit + server-backed) AND the radish feature/gherkin suite, x3 serializer modes (graphbinary bulked / parameterized / plain)',
     suiteProof: 'a MINUTES-long build whose log shows the docker integration tests plus the radish feature run — typically ~163 features / ~2149 scenarios / ~9890 steps, printed once per mode (x3). A sub-10-second BUILD SUCCESS with no radish/pytest counts means the profile did NOT activate',
-    // How to make the integration suite actually run before `mvn clean install` (false-green guard). For
-    // python/go/dotnet the suite lives behind a gitignored .glv marker a fresh worktree lacks; touch it.
+    // python/go/dotnet hide the suite behind a gitignored .glv marker a fresh worktree lacks.
     suiteActivation: 'cd <worktree>/gremlin-python && touch .glv  (it is gitignored, so it does not dirty the candidate diff)',
-    // The docker-compose build context (context: ../) mounts sibling target/ dirs (gremlin-test/target,
-    // gremlin-server, socket-server) that a FRESH worktree has NOT built. Without them the first
-    // `mvn clean install` fails fast on a missing docker build context — which LOOKS like a .glv no-op
-    // but is NOT. Build the upstream reactor deps inside the WORKTREE first (run from the worktree root).
+    // The docker-compose context mounts sibling target/ dirs a fresh worktree has not built;
+    // without them the first mvn fails in seconds — looks like a suite no-op but is not.
     prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
     sourceGlobs: 'gremlin_python/structure/io/graphbinaryV4.py, driver/serializer.py, driver/connection.py, driver/aiohttp/transport.py',
     testGlobs: 'tests/unit/structure/io/*, tests/unit/driver/test_http_streaming.py',
-    profileSubdir: 'python-4.0',
-    profileHint:
-`Files: 40-yappi-cpu.txt (yappi, CPU clock — per file:line tsub=self / ttot=cumulative / ncall) and
-40-yappi-wall.txt (wall clock); 40-mem.html + 40.mem.bin (memory); *.callgrind. There is NO written
-analysis — distill the yappi tables yourself, ranking by tsub (self CPU). Expect to see aenum
-DataType.__hash__/__call__/__new__, the graphbinaryV4.py:86 struct-unpack <lambda>, is_null, read_int,
-AiohttpSyncStream.read, and _read_vertexproperty/_read_vertex near the top.`,
-    seed:
-`Known hotspots/ideas (verify by reading source): aenum DataType (DataType(bt) construction + __hash__,
-~15% CPU); the shared struct unpack lambda at graphbinaryV4.py:86 (~6%); is_null; result-object
-construction (Vertex/VertexProperty/Path); AiohttpSyncStream.read (the 64KB chunk buffer is already merged).
-Known-good directions to include as floors: B-HYBRID (private {int:deserializer} cache built in
-GraphBinaryReader.__init__ from the enum-keyed self.deserializers; hot path uses it; KeyError->re-raise
-ValueError to keep the contract; public maps stay enum-keyed) ~15% zero-break; C1 int.from_bytes for
-INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     invariants: {
       hard: [
         'incremental streaming: connection.py _receive yields each object as decoded (no whole-response buffering)',
@@ -114,41 +83,20 @@ INTEGER unpackers only (floats/doubles stay on struct) ~6% bit-exact.`,
     label: 'gremlin-go',
     module: 'gremlin-go',
     sourceSubdir: 'gremlin-go',
-    // Go worktrees carry their own go.mod, so building/testing from the worktree is naturally
-    // isolated — no env trick needed. IMPORTANT: `go test ./driver/...` would sweep in
-    // server-dependent tests in connection_test.go (e.g. TestStreamingResultDelivery) that hit
-    // localhost:45940 and are NOT gated by RUN_INTEGRATION_TESTS — they FAIL with no server up.
-    // So the cheap unit gate targets only the verified server-free hot-path suites (GraphBinary
-    // de/serialization, Result, graph types, GValue), plus a full `go build ./...` to catch any
-    // compile break beyond those files. Full streaming/integration coverage runs in the mvn gate.
+    // A worktree carries its own go.mod, so it is naturally isolated. But `go test ./driver/...`
+    // would sweep in server-dependent tests (connection_test.go) that are NOT gated by
+    // RUN_INTEGRATION_TESTS and fail with no server up, so target only the server-free hot-path
+    // suites; `go build ./...` catches compile breaks elsewhere.
     unitTest: () => `cd <worktree>/gremlin-go && go build ./... && ` +
       `go test ./driver/ -run 'TestGraphBinary|TestSerializer|TestResult|TestGraph|TestGValue' -count=1`,
     unitToolDesc: 'go build + go test (server-free hot-path suites)',
-    // Go's .glv profile runs a docker-compose `go test` integration suite (NOT radish — gremlin-go has
-    // zero .feature files; its only 'generate-radish-support' step is shared groovy data-gen, not a test run).
+    // Go's gated suite is a docker `go test`, NOT radish — gremlin-go has no .feature files.
     suiteDesc: "the docker-compose Go integration suite: `docker compose up --build --exit-code-from gremlin-go-integration-tests` — go test against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
     suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server container becoming healthy, and the gremlin-go-integration-tests container running `go test` (PASS/ok lines, package timings) and exiting 0. There is NO radish output for Go — do NOT expect feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/go-test activity means the profile did NOT activate',
     suiteActivation: 'cd <worktree>/gremlin-go && touch .glv  (it is gitignored, so it does not dirty the candidate diff)',
-    // Same as python: the gremlin-go docker-compose context (context: ../) needs sibling target/ dirs
-    // (gremlin-test/target etc.) that a FRESH worktree lacks; the first `mvn clean install` fails fast on
-    // the missing build context until they are built. Build the upstream reactor deps in the WORKTREE first.
     prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
     sourceGlobs: 'gremlin-go/driver/ (GraphBinary reader/serializer, type deserialization, connection/result streaming)',
     testGlobs: 'gremlin-go/driver/*_test.go (GraphBinary + serializer unit tests)',
-    profileSubdir: 'go-4.0',
-    profileHint:
-`Files: go-profile-<date>.md (a WRITTEN end-to-end analysis — read this FIRST; it already ranks the decode
-tower with file:line hotspots and an allocation breakdown), plus raw 40-cpu.txt / 40-cpu.pprof and
-40-heap.txt / 40-heap.pprof / 40-heap.svg and 40-trace.out. The heap (alloc_objects / alloc_space) is the
-most actionable signal. IMPORTANT: the CPU profile's large usleep/pthread_cond_wait self-time is a flagged
-macOS all-thread idle-sampling artifact (pool=1) — DISCOUNT it; rank decode work by the cumulative tower
-and by allocations, not by that idle self-time.`,
-    seed:
-`There is NO prior Python-style hotspot list for Go — derive hotspots by READING gremlin-go/driver/.
-Go-idiomatic optimization space: per-element slice reallocation vs preallocation, encoding/binary vs
-manual byte math, interface-dispatch in the type switch, map lookups per element, string([]byte) copies,
-escape-analysis/allocation pressure feeding GC, and bufio/read sizing. Do NOT carry over Python-specific
-ideas (aenum, struct lambdas) — they do not exist here.`,
     invariants: {
       hard: [
         'incremental streaming: results delivered over the result channel as decoded (no buffering the whole response)',
@@ -164,55 +112,22 @@ ideas (aenum, struct lambdas) — they do not exist here.`,
 
   dotnet: {
     label: 'gremlin-dotnet',
-    module: 'gremlin-dotnet',                                  // reactor parent (submodules src + test); holds docker-compose.yml + the mvn gate
-    sourceSubdir: 'gremlin-dotnet/src/Gremlin.Net',            // where the deser source lives; the worktree edits stay here
-    // .NET worktrees build from their own csproj/sln, so building/testing from the worktree is naturally
-    // isolated — no env trick needed (like Go). The CHEAP pre-filter is the server-FREE unit project only:
-    // Gremlin.Net.UnitTest covers GraphBinary de/serialization round-trips with MemoryStream and needs no
-    // server. Do NOT add Gremlin.Net.IntegrationTest here — it is server-dependent and would fail with no
-    // server up. `dotnet test` restores+builds the referenced Gremlin.Net project, so this also catches a
-    // compile break. Full integration/feature coverage runs in the mvn gate.
-    // DOTNET_ROLL_FORWARD=LatestMajor is REQUIRED: the projects target net8.0 but this box ships only the
-    // .NET 10 runtime, so the xUnit test HOST (net8.0) refuses to launch without roll-forward ("You must
-    // install or update .NET to run this application"). Build alone succeeds; the test RUN needs this var.
+    module: 'gremlin-dotnet',                        // reactor parent (src + test); holds docker-compose.yml
+    sourceSubdir: 'gremlin-dotnet/src/Gremlin.Net',  // where the deser source lives
+    // Builds from its own csproj/sln, so a worktree is naturally isolated. The cheap pre-filter is
+    // the server-FREE UnitTest project (GraphBinary round-trips over MemoryStream); `dotnet test`
+    // also builds Gremlin.Net, catching compile breaks. IntegrationTest needs a server — excluded.
+    // DOTNET_ROLL_FORWARD lets the net8.0 test HOST launch on a box shipping only a newer runtime.
     unitTest: () => `cd <worktree>/gremlin-dotnet && ` +
       `DOTNET_ROLL_FORWARD=LatestMajor dotnet test test/Gremlin.Net.UnitTest/Gremlin.Net.UnitTest.csproj -c Release`,
-    unitToolDesc: 'dotnet test (Gremlin.Net.UnitTest, server-free; DOTNET_ROLL_FORWARD=LatestMajor for net8.0-on-net10)',
-    // .NET's .glv profile runs a docker-compose `dotnet test ./Gremlin.Net.sln` integration suite. It DOES
-    // include a Gherkin feature runner, but it is xUnit/TRX-framed (NOT radish) — so expect xUnit PASS lines
-    // and a "Passed!" summary, not radish feature/scenario/step counts.
+    unitToolDesc: 'dotnet test (Gremlin.Net.UnitTest, server-free; DOTNET_ROLL_FORWARD=LatestMajor for net8.0 on a newer runtime)',
+    // The gated suite DOES include a Gherkin runner, but xUnit/TRX-framed, not radish.
     suiteDesc: "the docker-compose .NET integration suite: `docker compose up --build --exit-code-from gremlin-dotnet-integration-tests` — `dotnet test ./Gremlin.Net.sln -c Release` (xUnit unit + integration incl. the Gherkin feature runner) plus the three Examples projects, against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
     suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server-test-dotnet container becoming healthy, and the gremlin-dotnet-integration-tests container running `dotnet test ./Gremlin.Net.sln` (xUnit PASS lines incl. Gherkin scenarios and a "Passed!" summary) followed by the three Examples projects, exiting 0. The framing is xUnit/TRX, NOT radish — do NOT expect radish feature/scenario/step counts. A sub-10-second BUILD SUCCESS with no docker/dotnet-test activity means the profile did NOT activate',
     suiteActivation: 'cd <worktree>/gremlin-dotnet && touch src/.glv test/.glv  (CRITICAL: .NET needs BOTH markers — gremlin-dotnet/src/.glv AND gremlin-dotnet/test/.glv. Touching only one leaves the suite a no-op false green. Both are gitignored, so they do not dirty the candidate diff.)',
-    // Same sibling-target/ context-mount trap as python/go: the gremlin-dotnet docker-compose contexts
-    // (context: ../) mount gremlin-test/gremlin-socket-server target artifacts a FRESH worktree has NOT built.
     prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
     sourceGlobs: 'gremlin-dotnet/src/Gremlin.Net/Structure/IO/GraphBinary4/ (GraphBinaryReader.cs entry/dispatch, TypeSerializerRegistry.cs DataType->serializer lookup, Types/*Serializer.cs per-type readers, StreamExtensions.cs primitive byte reads, ResponseSerializer.cs ReadStreamingAsync decode loop), Driver/Connection.cs + Driver/ResultSet.cs (Channel delivery)',
     testGlobs: 'gremlin-dotnet/test/Gremlin.Net.UnitTest/Structure/IO/GraphBinary4/*.cs (GraphBinary round-trip + serializer unit tests)',
-    profileSubdir: 'dotnet-4.0',
-    profileHint:
-`Files: README.md (a WRITTEN end-to-end analysis — read this FIRST; it already ranks the decode tower and the
-allocation/GC breakdown with file:line targets), plus 40-cpu-clean.speedscope.json / .nettrace (PRIMARY CPU
-profile; Sandwich view = self-time, call-tree = decode tower), 40-cpu-benchfaithful.* (server-GC env),
-40-counters-5exec.csv / 40-counters-1exec.csv (allocation + GC time series), 40-bdn.txt (BenchmarkDotNet).
-IMPORTANT: macOS EventPipe thread-time sampling counts thread-pool spin/park (Monitor.Enter_Slowpath,
-LowLevelSpinWaiter.Wait, LowLevelLifoSemaphore.Wait) and GC-poll (Thread.PollGCWorker ~23%) as on-CPU
-self-time — DISCOUNT those as scheduling/idle artifacts; rank decode work by the CUMULATIVE tower
-(ResponseSerializer.ReadStreamingAsync -> GraphBinaryReader.ReadAsync, ~30% inclusive) and by ALLOCATIONS,
-not by that spin/park self-time. ALSO: BenchmarkDotNet TestReadSmallBinary/TestReadBigBinary already FAIL
-(stale May-5 TestMessages fixtures, pre-existing, OUT OF SCOPE) — do not treat that as a regression.`,
-    seed:
-`There is NO Python-style aenum/struct hotspot list for .NET. From the stored profile: the path is
-DECODE-BOUND but the cost is the async-per-primitive + per-element ALLOCATION design, not serializer
-arithmetic (the serializer methods carry negligible self-time). ~333 MB allocated per request (~1.66 KB per
-result element); GC-poll and thread-pool spin/park dominate the visible on-CPU time. Concrete .NET fix
-targets (verify by reading source): per-primitive byte[] allocation in StreamExtensions.ReadByteAsync
-(new byte[1] per call) and the per-read buffer allocations; per-element DataType boxing/lookup in
-TypeSerializerRegistry.GetSerializerFor; List<string> label allocation in VertexSerializer; and COARSENING
-the async-per-read granularity (buffer a span then decode synchronously) to cut the millions of thin
-await/MoveNext continuations bouncing across thread-pool threads. Idiomatic levers: Span<byte>/stackalloc
-for fixed-width reads, ArrayPool buffers, BinaryPrimitives, struct readers, fewer interface-dispatch hops in
-the type switch. Do NOT carry over Python (aenum, struct lambdas) or Go-specific ideas — they do not exist here.`,
     invariants: {
       hard: [
         'incremental streaming: ResponseSerializer.ReadStreamingAsync must keep yielding each result object as decoded into the Channel (no buffering the whole response before delivery)',
@@ -228,70 +143,26 @@ the type switch. Do NOT carry over Python (aenum, struct lambdas) or Go-specific
 
   javascript: {
     label: 'gremlin-javascript',
-    module: 'gremlin-js/gremlin-javascript',                    // dir holding pom.xml + docker-compose.yml for the mvn gate
-    // Source of truth is the git-tracked lib/ tree (NOT src/ — src holds only bin scripts). The driver layer
-    // is .ts (connection.ts, result-set.ts); the GraphBinary deser hot path is plain .js under
-    // lib/structure/io/binary/internals/. The worktree edits stay under lib/.
+    module: 'gremlin-js/gremlin-javascript',        // holds pom.xml + docker-compose.yml
+    // Source of truth is the git-tracked lib/ tree (src/ holds only bin scripts): the driver layer
+    // is .ts, the GraphBinary deser hot path plain .js under lib/structure/io/binary/internals/.
     sourceSubdir: 'gremlin-js/gremlin-javascript/lib',
-    // gremlin-javascript is an npm WORKSPACE: node_modules is hoisted to the gremlin-js/ ROOT, so a FRESH
-    // worktree must `npm ci` at that root before any test can run. mocha+ts-node runs the suites directly
-    // against lib/ (no build/transpile step needed for the unit gate). The cheap pre-filter is the
-    // server-FREE GraphBinary suites only: test/unit/graphbinary/** (GraphBinaryReader/Writer + per-type
-    // round-trips + StreamReader, all against MemoryStream-equivalent buffers, no server) plus the
-    // server-free result-set/structure/graph-serializer unit tests. Do NOT add connection-test/client-test/
-    // traversal-test/auth-test here — they construct a Client/Connection and would hit a server that is not
-    // up. Full integration + cucumber feature coverage runs in the mvn (docker) gate. <worktree> is the
-    // worktree's repo root; npm ci runs at <worktree>/gremlin-js (the workspace root), the suite one level deeper.
+    // An npm WORKSPACE: node_modules is hoisted to gremlin-js/, so a fresh worktree must `npm ci`
+    // there first; mocha+ts-node then runs straight against lib/ with no transpile step. The cheap
+    // pre-filter is the server-free GraphBinary + result-set/structure suites; connection-, client-,
+    // traversal- and auth-test construct a Client and need a server, so they are excluded.
     unitTest: () => `cd <worktree>/gremlin-js && npm ci && cd <worktree>/gremlin-js/gremlin-javascript && ` +
       `npx cross-env TS_NODE_PROJECT='tsconfig.test.json' mocha 'test/unit/graphbinary/**/*.{js,ts}' ` +
       `test/unit/result-set-test.js test/unit/structure-types-test.js test/unit/graph-serializer-test.js`,
     unitToolDesc: 'mocha+ts-node (server-free GraphBinary + result-set/structure unit suites; npm ci first because node_modules is workspace-hoisted)',
-    // IMPORTANT GLV DIVERGENCE: gremlin-javascript has NO gitignored .glv marker. Its docker integration
-    // profile (glv-js, pom.xml) is activeByDefault=true, so a plain `mvn clean install` ALREADY runs the
-    // docker-compose suite. The false-green trap here is NOT a missing marker but the `skipTests` flag:
-    // `-DskipTests`/`-Dmaven.test.skip=true` makes the integration exec a no-op. So the gate must run WITHOUT
-    // any skip flag and PROVE the docker suite ran (see suiteProof). The container command is:
-    //   `npm ci && npm run test && npm run features-docker` + the three node examples.
+    // DIVERGENCE: JS has no .glv marker — its docker profile (glv-js) is activeByDefault, so plain
+    // `mvn clean install` already runs the suite. The false-green trap is the skipTests flag instead.
     suiteDesc: "the docker-compose JS integration suite: `docker compose up --build --exit-code-from gremlin-js-integration-tests` — inside the node container `npm ci && npm run test` (mocha unit + graphbinary integration) then `npm run features-docker` (cucumber-js feature/gherkin suite) then the three examples/node scripts, against a containerized gremlin-server (build SUCCESS requires the integration container to exit 0)",
     suiteProof: 'a MINUTES-long build whose log shows docker compose building images, the gremlin-server-test-js container becoming healthy, and the gremlin-js-integration-tests container running `npm ci`, the mocha unit+integration passing counts, the cucumber-js feature run (scenario/step counts), and the three node examples printing "All examples completed successfully", exiting 0. The framing is mocha + cucumber-js, NOT radish. A sub-10-second BUILD SUCCESS with no docker/npm activity means the integration exec was skipped (skipTests) — do NOT pass any -DskipTests / -Dmaven.test.skip flag',
-    // GLV DIVERGENCE: there is NO .glv marker for JS — the glv-js docker profile is activeByDefault=true, so
-    // a plain `mvn clean install` already runs the integration suite. The ONLY way to no-op it is a skip flag,
-    // so "activation" is the absence of any skip flag (NOT a touch). Nothing to create.
     suiteActivation: 'NOTHING TO TOUCH — gremlin-javascript has no .glv marker; the docker integration profile (glv-js) is activeByDefault=true, so `mvn clean install` runs it automatically. Your job is the OPPOSITE: do NOT pass -DskipTests or -Dmaven.test.skip=true (either makes the integration exec a no-op false green). Run a plain `mvn clean install -Dasciidoc.skip=true`.',
-    // Same sibling-target/ context-mount trap as python/go/dotnet: the docker-compose build contexts
-    // (context: ../../) mount gremlin-test/target + gremlin-socket-server target artifacts a FRESH worktree
-    // has NOT built. Build the upstream reactor deps in the WORKTREE first (run from the worktree root).
     prereqBuild: 'mvn install -pl gremlin-server,gremlin-test,gremlin-tools/gremlin-socket-server -am -DskipTests',
     sourceGlobs: 'gremlin-js/gremlin-javascript/lib/structure/io/binary/internals/ (StreamReader.js async-per-read primitive reads, AnySerializer.js per-element type dispatch (2x readUInt8), GraphBinaryReader.js readResponseStream decode loop + per-type *Serializer.js readers, DataType.js type-code map), lib/driver/connection.ts (stream() incremental path vs submit()/#handleResponse buffered path) + lib/driver/result-set.ts',
     testGlobs: 'gremlin-js/gremlin-javascript/test/unit/graphbinary/*.{js,ts} (GraphBinary round-trip + StreamReader unit tests), test/unit/result-set-test.js',
-    profileSubdir: 'javascript-4.0',
-    profileHint:
-`Files: README.md (a WRITTEN end-to-end analysis — read this FIRST; it ranks the decode tower + microtask
-breakdown with file:line targets), plus 40.cpuprofile (raw V8 CPU profile; open at speedscope.app — Sandwich
-= self-time, call-tree = decode tower), 40-cpu.svg (flamegraph), 40-cpu.txt (full self-time + cumulative
-ranking + phase rollup), 40-run.txt (run log). The profile is SINGLE-THREADED (serialize + the whole decode
-run on the main event loop), so the main-thread sampler is COMPLETE — no decode-worker blind spot. IMPORTANT:
-the top self-time entry is \`(idle)\` ~39% = main-thread off-CPU wait for the server to compute+stream the
-buffered response — DISCOUNT it as server/receive wait, not driver work. Rank driver work by self-time AFTER
-idle: decode (StreamReader + serializers) ~27% of the window and promise/microtask scheduling
-(processTicksAndRejections) ~15% are the two real client costs.`,
-    seed:
-`There is NO Python aenum / Go slice / .NET Span hotspot list for JS. From the stored profile the path is
-DECODE-bound on the MAIN EVENT LOOP and the dominant structural cost is the ASYNC-PER-BYTE StreamReader
-design: every primitive read (StreamReader.readUInt8 ~4.4%, readInt32BE, readBytes, #ensure ~2.3%) returns a
-Promise even though the whole response body is ALREADY buffered in memory, so per-element decode fragments
-into thousands of microtasks — processTicksAndRejections (promise/microtask drain) is ~15% of the window, the
-#2 client cost after decode itself. Concrete JS fix targets (verify by reading source):
-(1) buffer-and-decode SYNCHRONOUSLY in StreamReader — when the body is fully in memory, the per-primitive
-reads need not be async; cutting the await/microtask churn is the single biggest named lever;
-(2) AnySerializer.deserialize per-element type dispatch does 2x readUInt8 — coarsen to one read / a flatter
-type-code dispatch (DataType.js map lookup per element);
-(3) ArraySerializer.deserializeValue (id + label List<String>) and the element constructors
-(Vertex/VertexProperty) allocation. Idiomatic JS levers: avoid Promise allocation on the hot path, Buffer
-readUInt8/readInt32BE direct offsets vs a stateful reader, fewer Buffer.toString calls, reuse decode buffers.
-HARD CONSTRAINT: connection.ts stream()/readResponseStream is the genuinely-incremental path and MUST keep
-streaming; the buffered submit()/#handleResponse path may stay buffered (that is its contract) but do NOT
-make it the ONLY path. Do NOT carry over Python (aenum, struct lambdas), Go (slices), or .NET (Span) ideas.`,
     invariants: {
       hard: [
         'incremental streaming: connection.ts stream() -> GraphBinaryReader.readResponseStream must keep yielding each result object as decoded from the StreamReader (no buffering the whole response before delivery); the separate buffered submit()/#handleResponse path may stay buffered but must not become the only path',
@@ -307,32 +178,29 @@ make it the ONLY path. Do NOT carry over Python (aenum, struct lambdas), Go (sli
 }
 
 // ---- normalize args -----------------------------------------------------------
-// The harness may hand `args` over as a JSON-encoded STRING rather than an object.
-// A string is truthy, so `args && args.glv` would pass the guard yet read undefined
-// off the string and silently fall through to the 'python' default. Parse it back
-// into an object first so every read below behaves the same regardless of form.
+// The harness may hand `args` over as a JSON-encoded STRING. A string is truthy, so a
+// naive `args && args.glv` would pass the guard yet read undefined off the string.
 let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 
-// ---- resolve GLV ---------------------------------------------------------------
 const GLV = A.glv || 'python'
 const G = GLV_REGISTRY[GLV]
 if (!G) throw new Error(`unknown glv '${GLV}'. Known: ${Object.keys(GLV_REGISTRY).join(', ')}`)
 
-// ---- knobs --------------------------------------------------------------------
-const REPO       = A.repo   || '/Users/kiristep/dev/tinkerpop'
-const BASE       = A.base   || '4-glv-profiling'   // branch candidates fork from
-const VENV_PY    = A.python || '/Users/kiristep/venv-glv-4/bin/python'  // python lane only
-// Stored profiling results (per GLV) live here, OUTSIDE the repo. The Setup agent reads
-// PROFILE_DIR each run and returns a hotspot digest that seeds Research — see SHARED below.
-// Set args.profileRoot='' (or a missing dir) to fall back to the static registry seed.
-const PROFILE_ROOT = A.profileRoot !== undefined ? A.profileRoot : '/Users/kiristep/dev/profiling-results'
-const PROFILE_DIR  = PROFILE_ROOT && G.profileSubdir ? `${PROFILE_ROOT}/${G.profileSubdir}` : ''
+// ---- knobs (override any of these via args) -----------------------------------
+const REPO       = A.repo   || '.'        // repo root
+const BASE       = A.base   || 'master'   // branch candidates fork from
+const VENV_PY    = A.python || 'python3'  // python lane: interpreter with the driver + pytest
+// REQUIRED: the stored profiling results are the pipeline's only hotspot input. Setup
+// locates this GLV's profiles underneath it — no directory layout is assumed here.
+const PROFILE_ROOT = A.profileRoot
+if (!PROFILE_ROOT) throw new Error('args.profileRoot is required — it is the only hotspot input this pipeline has')
 const ALLOW_HIGH_CEILING = A.allowHighCeiling !== false  // default ON
+const LENS_COUNT         = A.lensCount    || 6      // research fan-out width
 const MAX_RESEARCH_CANDS = A.maxResearch  || 10
 const IMPLEMENT_CAP      = A.implementCap || 6      // narrow the serial mvn tail
-const REPAIR_CHEAP = A.repairCheap || 2             // code-repair attempts at unit stage
+const REPAIR_CHEAP = A.repairCheap || 2             // code-repair attempts at the unit stage
 const REPAIR_MVN   = A.repairMvn   || 1             // code-repair attempts at the mvn gate
 
 // ---- schemas ------------------------------------------------------------------
@@ -341,9 +209,19 @@ const SETUP = {
     ok: { type: 'boolean', description: 'true only if toolchain present and tree is in a usable, committed state' },
     toolchain: { type: 'string', description: 'what was verified (e.g. python+pytest, or go+mvn)' },
     treeClean: { type: 'boolean' }, abortReason: { type: 'string' }, notes: { type: 'string' },
-    profileFound: { type: 'boolean', description: 'true if the stored profiling dir existed and was read' },
-    profileDigest: { type: 'string', description: 'distilled ranked hotspot summary from the stored profiles (empty if none); seeds Research' },
+    profileFound: { type: 'boolean', description: 'true only if this GLV\'s profiling results were found and read; false ABORTS the run' },
+    profileDir: { type: 'string', description: 'the directory the profiles were actually read from' },
+    profileDigest: { type: 'string', description: 'ranked hotspot summary distilled from the stored profiles; the only hotspot input Research gets' },
   },
+}
+const LENS_PLAN = {
+  type: 'object', required: ['lenses'], properties: { lenses: { type: 'array', items: {
+    type: 'object', required: ['lens', 'highCeiling'],
+    properties: {
+      lens: { type: 'string', description: 'the attack surface + kind of change, incl. its boundary and the idiomatic techniques that apply; injected verbatim as one agent\'s brief' },
+      hotspotsCovered: { type: 'string', description: 'which ranked digest hotspot(s) this lens attacks' },
+      highCeiling: { type: 'boolean', description: 'true for the one aggressive/unsafe-lane lens' },
+    } } } },
 }
 const RESEARCH = {
   type: 'object', required: ['items'], properties: { items: { type: 'array', items: {
@@ -420,16 +298,14 @@ const FINALIZE = {
   },
 }
 
-// ---- invariant lists (used in SHARED and in several phase prompts) -------------
 const hardList = G.invariants.hard.map(s => '   - ' + s).join('\n')
 const softList = G.invariants.soft.map(s => '   - ' + s).join('\n')
 
 // =================================================================================
-// PHASE 0 — SETUP. Light: confirm the toolchain and a committed tree. No server, no
-// baseline. ALSO read the stored profiling results (if any) into a hotspot digest that
-// seeds Research — the script runtime can't read files, but this agent can, so the
-// digest must travel back through the structured result. Profile-read is NON-BLOCKING:
-// a missing/unreadable profile NEVER flips ok=false (we fall back to the static seed).
+// PHASE 0 — SETUP. Confirm the toolchain and a committed tree; no server, no baseline.
+// Also distills the stored profile into the ranked hotspot digest every later phase
+// reasons from: the script runtime cannot read files but this agent can, so the digest
+// travels back in the structured result. BLOCKING — no digest, no run.
 phase('Setup')
 log(`Correctness funnel for glv=${GLV} (${G.label}). Gated to 'mvn clean install'; operator benchmarks after.`)
 
@@ -449,41 +325,46 @@ ${GLV === 'python'
 Apply only trivial fixes (e.g. pip install pytest into the venv). If the toolchain is unusable, set
 ok=false with abortReason.
 
-${PROFILE_DIR ? `PROFILING DIGEST (this is the load-bearing seed for idea generation — do it carefully):
-There are STORED profiling results for this GLV at: ${PROFILE_DIR}
-${G.profileHint}
-Read those files and distill a COMPACT, RANKED hotspot digest into 'profileDigest' (set profileFound=true):
+PROFILING DIGEST — the load-bearing task of this phase; nothing downstream knows where the time goes
+except through what you write here, so do it carefully.
+Stored profiling results live under ${PROFILE_ROOT}. Find this GLV's own results there (look for a
+subdirectory named for ${G.label} or its language, whichever convention that tree uses), then work out
+what you have: the file extensions and names tell you which profiler produced them and which are raw
+traces vs a written analysis. If an analysis document is present, read it FIRST — it may already rank the
+decode tower — then confirm its claims against the raw data rather than trusting it wholesale.
+Distill a COMPACT, RANKED hotspot digest into 'profileDigest' (set profileFound=true):
 - The top decode/deserialization hot spots by SELF cost, each with function + file:line where you can find
   it, the metric (CPU self% or wall, and/or allocation count/bytes), and one phrase on WHY it is hot.
-- Note any explicitly-flagged measurement artifacts to discount (do NOT rank those as hot).
+- Interpret each profiler on its own terms — self vs cumulative cost are different questions, and sampling
+  profilers attribute idle/scheduling time (server wait, thread-pool park/spin, GC polling) as if it were
+  on-CPU work. Identify any such artifact and DISCOUNT it; report it as an artifact instead of ranking it
+  hot, and say which signal you ranked by instead.
+- Note pre-existing failures in the profile output as out-of-scope rather than as regressions.
 - 12-25 lines, concrete and source-anchored — this text is injected verbatim into the Research prompts, so
   it must let an engineer go straight to the right functions. Do NOT propose fixes here; just rank reality.
-This profile read is NON-BLOCKING: if ${PROFILE_DIR} is missing/empty/unreadable, set profileFound=false
-and profileDigest='' and DO NOT set ok=false for that reason alone.`
-  : `No profiling dir configured (profileRoot empty); set profileFound=false, profileDigest='' — Research will use the static seed.`}
+Record the directory you actually read in 'profileDir'. If you cannot find profiling results for this GLV,
+or they are unreadable, set profileFound=false AND ok=false with an abortReason saying so — without a
+profile this pipeline has no hotspots to work from and MUST NOT proceed on guesswork.
 Return ONLY the structured object.`,
   { phase: 'Setup', schema: SETUP })
 
 if (!rig || !rig.ok) { log(`ABORT: setup — ${rig && rig.abortReason}`); return { aborted: true, glv: GLV, reason: (rig && rig.abortReason) || 'setup failed', rig } }
-log(`Setup OK (${rig.toolchain}). Profiling digest: ${rig.profileFound ? 'LIVE from ' + PROFILE_DIR : 'none — using static seed'}.`)
+if (!rig.profileFound || !rig.profileDigest) {
+  log(`ABORT: no hotspot digest under ${PROFILE_ROOT} — refusing to research on guesswork`)
+  return { aborted: true, glv: GLV, reason: `no profiling data for ${GLV} under ${PROFILE_ROOT}`, rig }
+}
+const profileDir = rig.profileDir || PROFILE_ROOT
+log(`Setup OK (${rig.toolchain}). Hotspot digest read from ${profileDir}.`)
 
-// ---- shared context block (GLV-aware) — built AFTER setup so it can weave in the -----
-// live profiling digest. The digest (when present) is the authoritative hotspot source;
-// the static registry seed is the fallback / supplement.
-const PROFILE_SECTION = (rig.profileFound && rig.profileDigest)
-  ? `MEASURED HOTSPOTS (from real stored profiling at ${PROFILE_DIR} — treat as the AUTHORITATIVE ranking;
-prioritize ideas that attack these, and still verify each against the source before claiming anything):
-${rig.profileDigest}
-
-Static background (supplements the measured data above):
-${G.seed}`
-  : `Hotspot guidance (NO live profile was available this run — static seed):
-${G.seed}`
-
+// Shared context for every phase, built after Setup so it carries the digest.
 const SHARED =
 `Target: ${G.label} GraphBinary DESERIALIZATION hot path (repo ${REPO}).
 Read the source to ground every claim: ${G.sourceGlobs}. Tests: ${G.testGlobs}.
-${PROFILE_SECTION}
+
+MEASURED HOTSPOTS (distilled from real profiling at ${profileDir} — this is the AUTHORITATIVE ranking and
+the ONLY hotspot data you get; prioritize ideas that attack these, and verify each against the source before
+claiming anything. If something is not in here, do not assume it is hot):
+${rig.profileDigest}
 
 INVARIANTS (two tiers):
  HARD — any breach AUTO-PRUNES the idea (never worth trading for speed):
@@ -499,52 +380,50 @@ judge ideas on plausibility + correctness + invariant-safety, and for each give 
 (what to measure to confirm it helps). Do not claim NEW measured speedups.`
 
 // =================================================================================
-// PHASE 1 — RESEARCH. Wide, diverse-lens generation (breadth is cheap here).
+// PHASE 1 — RESEARCH. Lenses are DERIVED from the digest, not hardcoded: one planner
+// agent partitions the measured hotspots into disjoint attack surfaces, then one agent
+// generates ideas per lens. That keeps the fan-out aimed at where the time actually is
+// for THIS GLV, and keeps language-specific technique lists out of this script.
 phase('Research')
-const LENSES_BY_GLV = {
-  python: [
-    'small, low-risk tweaks (bound-method hoisting, cheaper int unpack via int.from_bytes for integers only, local caching)',
-    'enum/type-code dispatch (aenum DataType construction + __hash__; int-keyed dispatch cache)',
-    'the read/buffer path (struct lambda elimination, is_null cost) WITHOUT breaking streaming',
-    'result object construction (Vertex/VertexProperty/Path: __slots__, fewer attribute writes)',
-    'large structural refactor of the reader (per-type codegen, flatter dispatch, fewer Python frames)',
-    'high-ceiling: C-extension / Cython acceleration of the innermost decode loop',
-  ],
-  go: [
-    'allocation reduction (preallocate slices/maps by known length, reuse buffers, avoid string([]byte) copies)',
-    'decode dispatch (the type switch / interface dispatch in the GraphBinary reader)',
-    'byte handling (encoding/binary vs manual math, bufio/read sizing) WITHOUT breaking streaming',
-    'result construction & channel delivery (fewer allocations per element, GC pressure)',
-    'large structural refactor of the reader (flatter dispatch, generated per-type decoders)',
-    'high-ceiling: unsafe / encoding-binary / asm tricks on the innermost decode loop',
-  ],
-  dotnet: [
-    'allocation reduction (kill per-primitive byte[] allocs in StreamExtensions, ArrayPool/reused buffers, fewer List<string> label allocs)',
-    'async granularity coarsening (buffer a span then decode fixed-width primitives SYNCHRONOUSLY to cut the millions of await/MoveNext continuations) WITHOUT breaking streaming',
-    'decode dispatch (per-element DataType boxing/lookup in TypeSerializerRegistry.GetSerializerFor; flatter type dispatch)',
-    'byte handling (Span<byte>/stackalloc, BinaryPrimitives vs manual math, BufferedStream sizing)',
-    'result construction & Channel delivery (fewer allocations per element, GC/gen0 pressure)',
-    'large structural refactor of the reader (flatter dispatch, struct/generated per-type decoders)',
-    'high-ceiling: unsafe / Span / stackalloc tricks + aggressive async removal on the innermost decode loop',
-  ],
-  javascript: [
-    'async granularity: buffer-and-decode SYNCHRONOUSLY in StreamReader so per-primitive reads stop returning Promises (cut the processTicksAndRejections ~15% microtask churn) WITHOUT breaking the streaming path',
-    'decode dispatch (AnySerializer.deserialize per-element 2x readUInt8 -> one read / flatter DataType type-code dispatch)',
-    'byte handling (direct Buffer.readUInt8/readInt32BE at offsets vs the stateful StreamReader, fewer StreamReader.#ensure calls, fewer Buffer.toString)',
-    'result construction & allocation (Vertex/VertexProperty/Path + ArraySerializer id/label List<String>: fewer allocations and intermediate objects per element)',
-    'small, low-risk tweaks (bound-method/local hoisting, avoid Promise allocation on the hot path, cache per-type serializer lookups)',
-    'large structural refactor of the reader (flatter dispatch, generated/inlined per-type decoders, a synchronous decode core over the already-buffered body)',
-    'high-ceiling: full async removal on the innermost decode loop (synchronous decoder over the buffered body) + direct Buffer-offset reads bypassing the stateful StreamReader',
-  ],
-}
-const LENSES = (A.lenses || LENSES_BY_GLV[GLV] || LENSES_BY_GLV.python)
-  .filter(l => ALLOW_HIGH_CEILING || !/high-ceiling/i.test(l))
-
-const lensFindings = await parallel(LENSES.map((lens, i) => () => agent(
+const plan = await agent(
 `${SHARED}
 
-YOUR LENS: ${lens}.
-Generate concrete ideas ONLY within this lens — tiny tweaks to large refactors as it implies. For each:
+Plan the RESEARCH FAN-OUT for ${G.label}. You are not generating optimization ideas — you are dividing the
+work so that independent agents can, one per lens, in parallel.
+
+A "lens" is one attack surface: a bounded area of the decode path plus the KIND of change appropriate to it.
+Derive them from the MEASURED HOTSPOTS above and from reading the source — not from generic advice, and not
+from what would be idiomatic in some other language. Produce ${LENS_COUNT} lenses that:
+- COVER the ranked hotspots: every significant entry in the digest must fall inside at least one lens. Spend
+  more lenses on the costlier areas; do not spend one on something the profile shows is cheap.
+- are DISJOINT: two agents working different lenses should not converge on the same edit. State each lens's
+  boundary well enough that a reader knows what is out of scope for it.
+- span a RISK LADDER: at least one lens must be small/local low-risk tweaks and at least one a large
+  structural refactor of the reader, with the rest in between. Breadth of risk is the point — the cheap
+  tweaks are the reliable wins and the refactors are the upside.
+- name the ${G.label}-idiomatic techniques that apply, in the lens text, so its agent starts from the right
+  vocabulary for this language.
+${ALLOW_HIGH_CEILING
+  ? `- include EXACTLY ONE lens with highCeiling=true for the aggressive lane (${G.highCeilingNote})`
+  : '- do NOT include a high-ceiling lens; set highCeiling=false on all of them.'}
+For each lens give the lens text itself, which digest hotspot(s) it attacks, and highCeiling.
+Return ONLY the structured object.`,
+  { phase: 'Research', label: 'research:plan-lenses', schema: LENS_PLAN, model: 'opus' })
+
+const LENSES = (A.lenses
+    ? A.lenses.map(l => (typeof l === 'string' ? { lens: l, highCeiling: /high-ceiling/i.test(l) } : l))
+    : (plan && plan.lenses) || []
+  ).filter(l => l && l.lens && (ALLOW_HIGH_CEILING || !l.highCeiling))
+if (!LENSES.length) return { error: 'lens planning produced no lenses', glv: GLV, plan }
+log(`Lenses (${LENSES.length}): ${LENSES.map(l => l.lens.split(/[(:—]/)[0].trim()).join(' | ')}`)
+
+const lensFindings = await parallel(LENSES.map((l, i) => () => agent(
+`${SHARED}
+
+YOUR LENS: ${l.lens}
+It was chosen to attack these measured hotspots: ${l.hotspotsCovered || '(see the ranked digest above)'}.
+Generate concrete ideas ONLY within this lens — tiny tweaks to large refactors as it implies. Stay inside
+your boundary; other agents are covering the other lenses in parallel. For each idea:
 the area/function targeted, a concrete approach, riskTier, breaksContractGuess, invariants at risk, a
 qualitative expectedBenefit, and a benchmarkHint. Be generous — this is the wide discovery pass.
 Return ONLY the structured object.`,
@@ -665,8 +544,8 @@ log(`Approved for mvn gate: ${approved.length} — ${approved.map(x => x.c.id).j
 if (!approved.length) return { error: 'no candidate passed implement+review', glv: GLV, viable: viable.map(c => c.id) }
 
 // =================================================================================
-// PHASE 5 — CORRECTNESS. mvn clean install (unit+integration+feature). STRICTLY SERIAL
-// (Docker-orchestrated, fixed ports). <=1 code-repair; any repair re-enters Review.
+// PHASE 5 — CORRECTNESS. mvn clean install (unit+integration+feature), STRICTLY SERIAL
+// because the docker suite binds fixed ports. <=1 code-repair; a repair re-enters Review.
 phase('Correctness')
 const passed = []
 for (const x of approved) {
@@ -727,7 +606,7 @@ HARD invariants intact. approved=false on any violation. Return ONLY the structu
 log(`mvn-green: ${passed.length}/${approved.length} — ${passed.map(x => x.c.id).join(', ') || 'none'}`)
 
 // =================================================================================
-// PHASE 6 — FINALIZE + REPORT. Each survivor: clean standalone branch (NOT merged/pushed).
+// PHASE 6 — FINALIZE + REPORT. Each survivor becomes a clean standalone branch.
 phase('Report')
 const finals = await parallel(passed.map(x => () => agent(
 `Finalize candidate "${x.c.id}" as a clean STANDALONE branch auto/cand-${GLV}-${x.c.id} (do NOT merge, do
@@ -759,7 +638,6 @@ return {
     approved: approved.map(x => x.c.id),
     mvnGreen: passed.map(x => x.c.id),
   },
-  // Deliverable: each survivor is its OWN branch, sorted into two buckets. The OPERATOR benchmarks.
   passed: passedBucket,                  // green, no contract break — benchmark, then merge
   breaksContract: breaksContract,        // green, but changes public-api/custom-serializer — your call
   nextStep: `Each entry is an independent branch (auto/cand-${GLV}-<id>) that passes the FULL test suite, was reviewed for behavior-equivalence and invariants, and is a single clean commit. Nothing merged/pushed/combined. BENCHMARK each branch yourself (see each entry's benchmarkHint), then merge the ones that prove out — separately.`,
