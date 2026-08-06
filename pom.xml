@@ -510,6 +510,9 @@ limitations under the License.
                         <exclude>**/*.gbin</exclude>
                         <exclude>**/*.iml</exclude>
                         <exclude>**/*.json</exclude>
+                        <!-- notebooks are JSON: a comment header would have to live inside a
+                             cell, where RAT cannot see it, and would corrupt on every re-save -->
+                        <exclude>**/*.ipynb</exclude>
                         <exclude>**/*.xml</exclude>
                         <exclude>**/*.ldjson</exclude>
                         <exclude>**/*.graffle</exclude>
