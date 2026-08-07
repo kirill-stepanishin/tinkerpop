@@ -594,7 +594,8 @@ STEP 3 — RUN IT:
   cd <worktree>/${G.module} && docker compose down || true   # clear any stale stack first
   mvn clean install -Dasciidoc.skip=true
 Run it in the BACKGROUND and POLL to completion (the build far exceeds the 10-min Bash cap — do NOT block
-a single call on it; poll with short status checks so progress is visible). Only one build runs at a time,
+a single call on it). Poll every ~90s and NEVER sleep more than 150s in one call: a 180s no-progress
+watchdog kills the agent, and that killed a previous run mid-gate. Only one build runs at a time,
 so the fixed docker host ports the suite binds (e.g. 45940-45943 / 4588 / 8182, per GLV) are free.
 
 STEP 4 — PROVE THE SUITE ACTUALLY RAN (false-green guard): the proof for ${G.label} is: ${G.suiteProof}.
