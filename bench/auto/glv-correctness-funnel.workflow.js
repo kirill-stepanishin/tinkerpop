@@ -48,13 +48,13 @@ export const meta = {
   name: 'glv-correctness-funnel',
   description: 'GLV-parameterized: discover, implement, review and gate (unit+integration+feature tests) performance optimizations; each survivor on its own branch for the operator to benchmark + merge',
   phases: [
-    { title: 'Setup',       detail: 'confirm toolchain + clean tree, then distil the profile into a hotspot digest', model: 'opus' },
-    { title: 'Research',    detail: 'derive lenses from the hotspot digest, then generate ideas one agent per lens', model: 'opus' },
-    { title: 'Investigate', detail: 'deep per-candidate study; ruthless prune; two-tier invariant classification', model: 'opus' },
-    { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', model: 'sonnet (opus for restructure/high-ceiling)' },
-    { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'opus' },
-    { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'sonnet' },
-    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'haiku' },
+    { title: 'Setup',       detail: 'confirm toolchain + clean tree, then distil the profile into a hotspot digest', model: 'claude-opus-4-8[1m]' },
+    { title: 'Research',    detail: 'derive lenses from the hotspot digest, then generate ideas one agent per lens', model: 'claude-opus-4-8[1m]' },
+    { title: 'Investigate', detail: 'deep per-candidate study; ruthless prune; two-tier invariant classification', model: 'claude-opus-4-8[1m]' },
+    { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', model: 'claude-sonnet-5 (claude-opus-4-8[1m] for restructure/high-ceiling)' },
+    { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'claude-opus-4-8[1m]' },
+    { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'claude-sonnet-5' },
+    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'claude-haiku-4-5' },
   ],
 }
 
@@ -361,7 +361,7 @@ Record the directory you actually read in 'profileDir'. If you cannot find profi
 or they are unreadable, set profileFound=false AND ok=false with an abortReason saying so — without a
 profile this pipeline has no hotspots to work from and MUST NOT proceed on guesswork.
 Return ONLY the structured object.`,
-  { phase: 'Setup', schema: SETUP, model: 'opus' })
+  { phase: 'Setup', schema: SETUP, model: 'claude-opus-4-8[1m]' })
 
 if (!rig || !rig.ok) { log(`ABORT: setup — ${rig && rig.abortReason}`); return { aborted: true, glv: GLV, reason: (rig && rig.abortReason) || 'setup failed', rig } }
 if (!rig.profileFound || !rig.profileDigest) {
@@ -423,7 +423,7 @@ ${ALLOW_HIGH_CEILING
   : '- do NOT include a high-ceiling lens; set highCeiling=false on all of them.'}
 For each lens give the lens text itself, which digest hotspot(s) it attacks, and highCeiling.
 Return ONLY the structured object.`,
-  { phase: 'Research', label: 'research:plan-lenses', schema: LENS_PLAN, model: 'opus' })
+  { phase: 'Research', label: 'research:plan-lenses', schema: LENS_PLAN, model: 'claude-opus-4-8[1m]' })
 
 const LENSES = (A.lenses
     ? A.lenses.map(l => (typeof l === 'string' ? { lens: l, highCeiling: /high-ceiling/i.test(l) } : l))
@@ -442,7 +442,7 @@ your boundary; other agents are covering the other lenses in parallel. For each 
 the area/function targeted, a concrete approach, riskTier, breaksContractGuess, invariants at risk, a
 qualitative expectedBenefit, and a benchmarkHint. Be generous — this is the wide discovery pass.
 Return ONLY the structured object.`,
-  { phase: 'Research', label: `research:lens-${i + 1}`, schema: RESEARCH, model: 'opus' })))
+  { phase: 'Research', label: `research:lens-${i + 1}`, schema: RESEARCH, model: 'claude-opus-4-8[1m]' })))
 
 const allIdeas = lensFindings.filter(Boolean).flatMap(r => r.items || [])
 log(`Raw ideas: ${allIdeas.length} across ${LENSES.length} lenses. Synthesizing…`)
@@ -460,7 +460,7 @@ Synthesize a deduped PORTFOLIO of at most ${MAX_RESEARCH_CANDS} candidates:
   branch and we NEVER combine them. Two candidates may touch the same file — fine.
 - Assign a unique kebab id.
 Return ONLY the structured object.`,
-  { phase: 'Research', label: 'research:synthesize', schema: PORTFOLIO, model: 'sonnet' })
+  { phase: 'Research', label: 'research:synthesize', schema: PORTFOLIO, model: 'claude-sonnet-5' })
 
 let candidates = (portfolio.items || []).slice(0, MAX_RESEARCH_CANDS)
 if (!candidates.length) return { error: 'no candidates from research', glv: GLV, allIdeas }
@@ -486,7 +486,7 @@ Produce a rigorous, citation-backed (file:line) study:
 - standalone (MUST be true to proceed — its own branch), confidence (0..1).
 Be willing to KILL candidates: the serial mvn tail is narrow on purpose. Set viable=false if it breaks a
 hard invariant, is not standalone, or risk clearly outweighs benefit. Return ONLY the structured object.`,
-  { phase: 'Investigate', label: `investigate:${c.id}`, schema: INVESTIGATION, model: 'opus' })))
+  { phase: 'Investigate', label: `investigate:${c.id}`, schema: INVESTIGATION, model: 'claude-opus-4-8[1m]' })))
 
 const invById = Object.fromEntries(investigations.filter(Boolean).map(v => [v.id, v]))
 const byId = Object.fromEntries(candidates.map(c => [c.id, c]))
@@ -533,7 +533,7 @@ RULES:
 Return ONLY the structured object.`,
     { phase: 'Implement', label: `impl:${c.id}`, isolation: 'worktree', schema: BUILD,
       // Local edits are Sonnet work; the big rewrites get Opus.
-      model: (c.riskTier === 'restructure' || c.riskTier === 'high-ceiling') ? 'opus' : 'sonnet' }),
+      model: (c.riskTier === 'restructure' || c.riskTier === 'high-ceiling') ? 'claude-opus-4-8[1m]' : 'claude-sonnet-5' }),
   (b, c) => {
     if (!b || !b.unitGreen) { log(`DROP ${c.id}: unit gate (${b && b.summary})`); return null }
     if (b.touchedTests) { log(`DROP ${c.id}: modified tests`); return null }
@@ -551,7 +551,7 @@ ${hardList}
     (this candidate's declared impact is '${c.breaksContract}').
 approved=true ONLY if behavior-equivalent, tests untouched, and HARD invariants intact.
 Return ONLY the structured object.`,
-      { phase: 'Review', label: `review:${c.id}`, schema: REVIEW, model: 'opus' })
+      { phase: 'Review', label: `review:${c.id}`, schema: REVIEW, model: 'claude-opus-4-8[1m]' })
       .then(r => (r && r.approved && !r.touchedTests) ? { c, build: b, review: r } : (log(`DROP ${c.id}: review — ${r && r.verdict}`), null))
   },
 )
@@ -610,7 +610,7 @@ ${REPAIR_MVN} time(s); set repairedAtMvn=true if you changed code. fullSuiteGree
 SUCCESS with suiteRan=true. On failure capture the failing test/section in failTail. Return ONLY the object.`,
     // Mostly recipe-execution and polling; the one judgment (suiteRan) is pinned to
     // quotable log evidence, and the script re-checks it structurally below.
-    { phase: 'Correctness', label: `mvn:${c.id}`, schema: MVN, model: 'sonnet' })
+    { phase: 'Correctness', label: `mvn:${c.id}`, schema: MVN, model: 'claude-sonnet-5' })
   if (m && m.fullSuiteGreen && m.suiteRan === false) {
     log(`DROP ${c.id}: mvn gate reported green but suiteRan=false (suite-not-activated false-green) — ${m.summary}`); continue
   }
@@ -620,7 +620,7 @@ SUCCESS with suiteRan=true. On failure capture the failing test/section in failT
 `Re-review candidate "${c.id}" (branch auto/cand-${GLV}-${c.id}) — CODE-REPAIRED during the mvn gate.
 Read the CURRENT diff vs ${BASE}. Same bar: behavior-equivalence across all types, tests untouched,
 HARD invariants intact. approved=false on any violation. Return ONLY the structured object.`,
-      { phase: 'Review', label: `re-review:${c.id}`, schema: REVIEW, model: 'opus' })
+      { phase: 'Review', label: `re-review:${c.id}`, schema: REVIEW, model: 'claude-opus-4-8[1m]' })
     if (!r2 || !r2.approved || r2.touchedTests) { log(`DROP ${c.id}: re-review after mvn repair failed`); continue }
   }
   passed.push(x)
@@ -637,7 +637,7 @@ write a concise imperative commit subject (<=50 chars, capitalized, no trailing 
 conventional-commit prefix). Keep the diff PURE.
 Report branch, clean (single-purpose vs ${BASE}), diffStat, commitMessage, and benchmarkHint (what the
 operator should measure to confirm this change actually improves performance). Return ONLY the object.`,
-  { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE, model: 'haiku' })
+  { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE, model: 'claude-haiku-4-5' })
   .then(f => ({ ...x, final: f }))))
 
 const enrich = (x) => ({
