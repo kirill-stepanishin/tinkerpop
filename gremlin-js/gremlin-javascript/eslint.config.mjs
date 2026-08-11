@@ -42,7 +42,7 @@ export default [
     rules: {
       "prettier/prettier": ["error", { endOfLine: "auto" }],
       "linebreak-style": 0,
-      quotes: ["error", "single"],
+      quotes: ["error", "single", { avoidEscape: true }],
       semi: ["error", "always"],
       "no-constant-condition": ["error", { checkLoops: false }],
       strict: ["error", "global"],
