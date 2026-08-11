@@ -73,13 +73,15 @@ export default class AnySerializer {
    */
   async deserialize(reader) {
     const pos = reader.position;
-    const type_code = await reader.readUInt8();
+    const header = await reader.readTypeAndFlag();
+    const type_code = header >>> 8;
+    const value_flag = header & 0xff;
+
     const serializer = this.ioc.serializers[type_code];
     if (!serializer) {
       throw new Error(`AnySerializer: unknown {type_code}=0x${type_code.toString(16)} at position ${pos}`);
     }
 
-    const value_flag = await reader.readUInt8();
     if (value_flag === 0x01) {
       return null;
     }
@@ -87,6 +89,7 @@ export default class AnySerializer {
       throw new Error(`AnySerializer: unexpected {value_flag}=0x${value_flag.toString(16)} at position ${pos}`);
     }
 
+    const postDeserialize = this._postDeserialize;
     let result;
     try {
       result = await serializer.deserializeValue(reader, value_flag, type_code);
@@ -95,8 +98,8 @@ export default class AnySerializer {
       throw err;
     }
 
-    if (this._postDeserialize) {
-      return this._postDeserialize(result, type_code);
+    if (postDeserialize) {
+      return postDeserialize(result, type_code);
     }
     return result;
   }

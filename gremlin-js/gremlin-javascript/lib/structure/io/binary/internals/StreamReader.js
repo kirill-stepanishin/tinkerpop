@@ -147,6 +147,22 @@ export default class StreamReader {
   }
 
   /**
+   * Read a 2-byte header (type_code + value_flag) as a single packed, unsigned
+   * 16-bit value: `(byte0 << 8) | byte1`. Non-allocating: reads directly from
+   * the internal buffer with a single `#ensure(2)` instead of two separate
+   * single-byte reads.
+   * @returns {Promise<number>} packed unsigned 16-bit value
+   */
+  async readTypeAndFlag() {
+    await this.#ensure(2);
+    const b0 = this.#buffer[this.#offset];
+    const b1 = this.#buffer[this.#offset + 1];
+    this.#offset += 2;
+    this.#position += 2;
+    return (b0 << 8) | b1;
+  }
+
+  /**
    * @returns {Promise<number>} signed 16-bit big-endian integer
    */
   async readInt16BE() {
