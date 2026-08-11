@@ -139,6 +139,7 @@ export default [
       "doc/**/*.js",
       "node_modules/**/*",
       "eslint.config.mjs",
+      "lib/driver/util/profiling-application.mjs",
     ],
   },
   {
