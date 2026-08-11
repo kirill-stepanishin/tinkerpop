@@ -23,18 +23,20 @@ import gremlin from '../../../build/esm/index.js';
 
 const { Client } = gremlin.driver;
 
+/* eslint-disable quotes */
 const SCRIPTS = [
-  "g.V()",
-  "g.V().count()",
+  'g.V()',
+  'g.V().count()',
   "g.V().values('name')",
   "g.V().has('name','marko').out('knows').values('name')",
   "g.V().has('name','marko').out('created').values('name')",
-  "g.E()",
-  "g.E().count()",
+  'g.E()',
+  'g.E().count()',
   "g.V().has('name','marko').outE('knows').inV().values('name')",
   "g.V().group().by(T.label).by(values('name').fold())",
-  "g.V().match(__.as('a').out('created').as('b'),__.as('b').has('name','lop')).select('a','b')"
+  "g.V().match(__.as('a').out('created').as('b'),__.as('b').has('name','lop')).select('a','b')",
 ];
+/* eslint-enable quotes */
 
 class Semaphore {
   constructor(max) {
@@ -48,7 +50,7 @@ class Semaphore {
       this._count++;
       return Promise.resolve();
     }
-    return new Promise(resolve => this._queue.push(resolve));
+    return new Promise((resolve) => this._queue.push(resolve));
   }
 
   release() {
@@ -97,23 +99,57 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     switch (arg) {
-      case '--test-type': args.testType = argv[++i]; break;
-      case '--host': args.host = argv[++i]; break;
-      case '--port': args.port = parseInt(argv[++i]); break;
-      case '--parallelism': args.parallelism = parseInt(argv[++i]); break;
-      case '--warmups': args.warmups = parseInt(argv[++i]); break;
-      case '--executions': args.executions = parseInt(argv[++i]); break;
-      case '--requests': args.requests = parseInt(argv[++i]); break;
-      case '--script': args.script = argv[++i]; break;
-      case '--exercise': args.exercise = true; break;
-      case '--stream': args.stream = true; break;
-      case '--pool-size': args.poolSize = parseInt(argv[++i]); break;
-      case '--too-slow-threshold': args.tooSlowThreshold = parseInt(argv[++i]); break;
-      case '--timeout': args.timeout = parseInt(argv[++i]); break;
-      case '--min-expected-rps': args.minExpectedRps = parseInt(argv[++i]); break;
-      case '--pause-between-runs': args.pauseBetweenRuns = parseInt(argv[++i]); break;
-      case '--store': args.store = argv[++i]; break;
-      case '--no-exit': args.noExit = true; break;
+      case '--test-type':
+        args.testType = argv[++i];
+        break;
+      case '--host':
+        args.host = argv[++i];
+        break;
+      case '--port':
+        args.port = parseInt(argv[++i], 10);
+        break;
+      case '--parallelism':
+        args.parallelism = parseInt(argv[++i], 10);
+        break;
+      case '--warmups':
+        args.warmups = parseInt(argv[++i], 10);
+        break;
+      case '--executions':
+        args.executions = parseInt(argv[++i], 10);
+        break;
+      case '--requests':
+        args.requests = parseInt(argv[++i], 10);
+        break;
+      case '--script':
+        args.script = argv[++i];
+        break;
+      case '--exercise':
+        args.exercise = true;
+        break;
+      case '--stream':
+        args.stream = true;
+        break;
+      case '--pool-size':
+        args.poolSize = parseInt(argv[++i], 10);
+        break;
+      case '--too-slow-threshold':
+        args.tooSlowThreshold = parseInt(argv[++i], 10);
+        break;
+      case '--timeout':
+        args.timeout = parseInt(argv[++i], 10);
+        break;
+      case '--min-expected-rps':
+        args.minExpectedRps = parseInt(argv[++i], 10);
+        break;
+      case '--pause-between-runs':
+        args.pauseBetweenRuns = parseInt(argv[++i], 10);
+        break;
+      case '--store':
+        args.store = argv[++i];
+        break;
+      case '--no-exit':
+        args.noExit = true;
+        break;
     }
   }
 
@@ -126,12 +162,16 @@ function createClients(url, poolSize) {
 
 async function closeClients(clients) {
   for (const client of clients) {
-    try { await client.close(); } catch (e) { /* ignore */ }
+    try {
+      await client.close();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function writeStore(storePath, parallelism, poolSize, rps) {
@@ -180,13 +220,18 @@ async function runThroughputTest(args, url, measurements, errorsPerExecution) {
     for (let r = 0; r < warmupRequests; r++) {
       const script = chooser ? chooser.next() : args.script;
       const client = clients[r % clients.length];
-      promises.push((async () => {
-        await sem.acquire();
-        try {
-          await client.submit(script, null);
-        } catch (e) { /* ignore warmup errors */ }
-        finally { sem.release(); }
-      })());
+      promises.push(
+        (async () => {
+          await sem.acquire();
+          try {
+            await client.submit(script, null);
+          } catch {
+            /* ignore warmup errors */
+          } finally {
+            sem.release();
+          }
+        })(),
+      );
     }
 
     await Promise.allSettled(promises);
@@ -197,13 +242,17 @@ async function runThroughputTest(args, url, measurements, errorsPerExecution) {
     console.log(`[warmup-${w}] requests: ${warmupRequests} | time(s): ${elapsed.toFixed(3)}    | req/sec: ${rps}`);
     await closeClients(clients);
 
-    if (w < args.warmups) await sleep(args.pauseBetweenRuns);
+    if (w < args.warmups) {
+      await sleep(args.pauseBetweenRuns);
+    }
   }
 
   const avgWarmupRps = args.warmups > 0 ? Math.round(totalWarmupRps / args.warmups) : 0;
 
   if (!args.exercise && avgWarmupRps < args.minExpectedRps) {
-    console.log(`avg req/sec during warmup (${avgWarmupRps}) is below minimum expected (${args.minExpectedRps}), skipping test cycles`);
+    console.log(
+      `avg req/sec during warmup (${avgWarmupRps}) is below minimum expected (${args.minExpectedRps}), skipping test cycles`,
+    );
     console.log('avg req/sec: 0');
     return;
   }
@@ -215,7 +264,7 @@ async function runThroughputTest(args, url, measurements, errorsPerExecution) {
   const testStart = performance.now();
 
   for (let e = 1; e <= args.executions; e++) {
-    if ((performance.now() - testStart) > args.timeout) {
+    if (performance.now() - testStart > args.timeout) {
       console.log('Timeout reached, skipping remaining test cycles');
       break;
     }
@@ -232,18 +281,26 @@ async function runThroughputTest(args, url, measurements, errorsPerExecution) {
     for (let r = 0; r < args.requests; r++) {
       const script = execChooser ? execChooser.next() : args.script;
       const client = clients[r % clients.length];
-      promises.push((async () => {
-        await sem.acquire();
-        const reqStart = performance.now();
-        try {
-          await client.submit(script, null);
-          if ((performance.now() - reqStart) > args.tooSlowThreshold) tooSlow++;
-        } catch (e) {
-          errors++;
-        } finally {
-          sem.release();
-        }
-      })());
+      promises.push(
+        // tooSlow/errors are scoped to the outer execution (not the inner request loop), so
+        // sharing them across these closures is intentional accumulation, not a stale-loop-
+        // variable hazard.
+        // eslint-disable-next-line no-loop-func
+        (async () => {
+          await sem.acquire();
+          const reqStart = performance.now();
+          try {
+            await client.submit(script, null);
+            if (performance.now() - reqStart > args.tooSlowThreshold) {
+              tooSlow++;
+            }
+          } catch {
+            errors++;
+          } finally {
+            sem.release();
+          }
+        })(),
+      );
     }
 
     await Promise.allSettled(promises);
@@ -258,13 +315,19 @@ async function runThroughputTest(args, url, measurements, errorsPerExecution) {
     errorsPerExecution.push(errors);
 
     if (args.exercise) {
-      console.log(`[test-${e}]   requests: ${args.requests} | time(s): ${elapsed.toFixed(3)}    | req/sec: ${rps}   | too slow: N/A | errors: ${errors}`);
+      console.log(
+        `[test-${e}]   requests: ${args.requests} | time(s): ${elapsed.toFixed(3)}    | req/sec: ${rps}   | too slow: N/A | errors: ${errors}`,
+      );
     } else {
-      console.log(`[test-${e}]   requests: ${args.requests} | time(s): ${elapsed.toFixed(3)}    | req/sec: ${rps}   | too slow: ${tooSlow} | errors: ${errors}`);
+      console.log(
+        `[test-${e}]   requests: ${args.requests} | time(s): ${elapsed.toFixed(3)}    | req/sec: ${rps}   | too slow: ${tooSlow} | errors: ${errors}`,
+      );
     }
 
     await closeClients(clients);
-    if (e < args.executions) await sleep(args.pauseBetweenRuns);
+    if (e < args.executions) {
+      await sleep(args.pauseBetweenRuns);
+    }
   }
 
   const avgRps = completedExecutions > 0 ? Math.round(totalRps / completedExecutions) : 0;
@@ -282,6 +345,7 @@ async function submitAndCount(client, script) {
 
 async function streamAndCount(client, script) {
   let count = 0;
+  // eslint-disable-next-line no-unused-vars -- iterating only for its count/exhaustion side effect
   for await (const _ of client.stream(script, null)) {
     count++;
   }
@@ -309,7 +373,9 @@ async function runLatencyTest(args, url, measurements, errorsPerExecution) {
       console.log(`[warmup-${w}]time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
 
       if (elapsed > args.timeout / 1000) {
-        console.log(`Warmup latency (${elapsed.toFixed(6)} s) exceeds timeout (${(args.timeout / 1000).toFixed(3)} s), skipping test cycles`);
+        console.log(
+          `Warmup latency (${elapsed.toFixed(6)} s) exceeds timeout (${(args.timeout / 1000).toFixed(3)} s), skipping test cycles`,
+        );
         console.log('avg latency (sec/req): 0');
         return;
       }
@@ -325,7 +391,7 @@ async function runLatencyTest(args, url, measurements, errorsPerExecution) {
   const testStart = performance.now();
 
   for (let e = 1; e <= args.executions; e++) {
-    if ((performance.now() - testStart) > args.timeout) {
+    if (performance.now() - testStart > args.timeout) {
       console.log('Timeout reached, skipping remaining test cycles');
       break;
     }
@@ -333,12 +399,12 @@ async function runLatencyTest(args, url, measurements, errorsPerExecution) {
     const client = new Client(url);
     let errors = 0;
     let resultCount = 0;
-    let elapsed = 0;
+    let elapsed;
     const start = performance.now();
     try {
       resultCount = await executeQuery(client, args.script);
       elapsed = (performance.now() - start) / 1000;
-    } catch (e) {
+    } catch {
       // A per-execution request error in the MEASURED cycle is caught and
       // counted for this execution (mirrors the Go app) instead of throwing
       // out to main and exiting. The execution's measured time is still
@@ -362,7 +428,9 @@ async function runLatencyTest(args, url, measurements, errorsPerExecution) {
     errorsPerExecution.push(errors);
     console.log(`[test-${e}]  time: ${elapsed.toFixed(9)}, result count: ${resultCount}`);
 
-    if (e < args.executions) await sleep(args.pauseBetweenRuns);
+    if (e < args.executions) {
+      await sleep(args.pauseBetweenRuns);
+    }
   }
 
   const avgLatency = completedExecutions > 0 ? totalTime / completedExecutions : 0;
@@ -405,7 +473,9 @@ async function main() {
     console.log('RESULT_JSON: ' + JSON.stringify(resultPayload));
   } catch (err) {
     console.error(`Failed Execution: ${err.name} - ${err.message}`);
-    if (!args.noExit) process.exit(1);
+    if (!args.noExit) {
+      process.exit(1);
+    }
   }
 
   if (args.noExit) {
