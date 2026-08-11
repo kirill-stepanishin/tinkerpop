@@ -54,7 +54,7 @@ export const meta = {
     { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', model: 'claude-sonnet-5 (claude-opus-4-8[1m] for restructure/high-ceiling)' },
     { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'claude-opus-4-8[1m]' },
     { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'claude-sonnet-5' },
-    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'claude-haiku-4-5' },
+    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'claude-sonnet-5' },
   ],
 }
 
@@ -637,7 +637,7 @@ write a concise imperative commit subject (<=50 chars, capitalized, no trailing 
 conventional-commit prefix). Keep the diff PURE.
 Report branch, clean (single-purpose vs ${BASE}), diffStat, commitMessage, and benchmarkHint (what the
 operator should measure to confirm this change actually improves performance). Return ONLY the object.`,
-  { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE, model: 'claude-haiku-4-5' })
+  { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE, model: 'claude-sonnet-5' })
   .then(f => ({ ...x, final: f }))))
 
 const enrich = (x) => ({
