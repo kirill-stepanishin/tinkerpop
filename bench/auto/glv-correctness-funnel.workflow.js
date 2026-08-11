@@ -54,7 +54,7 @@ export const meta = {
     { title: 'Implement',   detail: 'one agent per candidate in own worktree; code-repair loop; unit gate', model: 'claude-sonnet-5 (claude-opus-4-8[1m] for restructure/high-ceiling)' },
     { title: 'Review',      detail: 'independent correctness + invariant review before the expensive gate', model: 'claude-opus-4-8[1m]' },
     { title: 'Correctness', detail: 'mvn clean install incl. integration + feature — strictly serial; <=1 code-repair', model: 'claude-sonnet-5' },
-    { title: 'Report',      detail: 'every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'claude-sonnet-5' },
+    { title: 'Report',      detail: 'READ-ONLY: describe every test-passing branch, sorted into passed / breaks-contract, ready to benchmark', model: 'claude-sonnet-5' },
   ],
 }
 
@@ -307,7 +307,7 @@ const MVN = {
 const FINALIZE = {
   type: 'object', required: ['id', 'branch', 'clean'], properties: {
     id: { type: 'string' }, branch: { type: 'string' },
-    clean: { type: 'boolean', description: 'single-purpose, mergeable diff vs BASE with one clean commit' },
+    clean: { type: 'boolean', description: 'OBSERVED: is the diff vs BASE already a single-purpose change in one commit? false means it also carries unrelated edits (e.g. a lint fix) or spans several commits — information for the operator, not a failure' },
     commitMessage: { type: 'string' }, diffStat: { type: 'string' },
     benchmarkHint: { type: 'string', description: 'what the operator should measure for this branch' },
   },
@@ -631,12 +631,26 @@ log(`mvn-green: ${passed.length}/${approved.length} — ${passed.map(x => x.c.id
 // PHASE 6 — FINALIZE + REPORT. Each survivor becomes a clean standalone branch.
 phase('Report')
 const finals = await parallel(passed.map(x => () => agent(
-`Finalize candidate "${x.c.id}" as a clean STANDALONE branch auto/cand-${GLV}-${x.c.id} (do NOT merge, do
-NOT push). In its worktree: squash WIP into ONE commit that is a single-purpose, mergeable diff vs ${BASE};
-write a concise imperative commit subject (<=50 chars, capitalized, no trailing period, no
-conventional-commit prefix). Keep the diff PURE.
-Report branch, clean (single-purpose vs ${BASE}), diffStat, commitMessage, and benchmarkHint (what the
-operator should measure to confirm this change actually improves performance). Return ONLY the object.`,
+`Describe candidate "${x.c.id}" on its STANDALONE branch auto/cand-${GLV}-${x.c.id}.
+
+This step is STRICTLY READ-ONLY. The branch already passed the full test suite at its current commits, and
+that green result is what makes it publishable — rewriting it would invalidate the gate and risk destroying
+the candidate. You MUST NOT run any history-rewriting or publishing command: no rebase, reset, commit,
+amend, cherry-pick, branch -f, push, merge, or tag. Only read: git log, git diff, git show, git status.
+
+In its worktree, READ the branch and REPORT:
+ - branch: auto/cand-${GLV}-${x.c.id}
+ - diffStat: 'git diff --stat ${BASE}..HEAD'
+ - commitMessage: the existing subject(s) from 'git log --oneline ${BASE}..HEAD'. If there is more than one
+   commit, list them — do NOT collapse or reword them.
+ - clean: an OBSERVATION, not a goal — true only if the diff vs ${BASE} is a single-purpose change confined
+   to the optimization. Set it false and say why in benchmarkHint if the branch also carries unrelated
+   edits (e.g. a lint or tooling fix made to get the build green), or if it has more than one commit.
+   A false here is useful information for the operator, not a failure.
+ - benchmarkHint: what the operator should measure to confirm this change actually improves performance —
+   name the specific baseline hotspot figures to diff against, and any workload caveat (e.g. if the
+   profiled query under-represents this code path, say which workload to use instead).
+Return ONLY the object.`,
   { phase: 'Report', label: `finalize:${x.c.id}`, schema: FINALIZE, model: 'claude-sonnet-5' })
   .then(f => ({ ...x, final: f }))))
 
@@ -662,5 +676,5 @@ return {
   },
   passed: passedBucket,                  // green, no contract break — benchmark, then merge
   breaksContract: breaksContract,        // green, but changes public-api/custom-serializer — your call
-  nextStep: `Each entry is an independent branch (auto/cand-${GLV}-<id>) that passes the FULL test suite, was reviewed for behavior-equivalence and invariants, and is a single clean commit. Nothing merged/pushed/combined. BENCHMARK each branch yourself (see each entry's benchmarkHint), then merge the ones that prove out — separately.`,
+  nextStep: `Each entry is an independent branch (auto/cand-${GLV}-<id>) that passes the FULL test suite and was reviewed for behavior-equivalence and invariants, left exactly as gated — nothing merged/pushed/combined/rewritten. Check each entry's cleanBranch: false means the branch also carries unrelated edits (e.g. a lint fix needed to get the build green) or spans several commits, so tidy it up by hand before merging. BENCHMARK each branch yourself (see each entry's benchmarkHint), then merge the ones that prove out — separately.`,
 }
