@@ -121,6 +121,14 @@ export default class StreamReader {
    * @returns {Promise<Buffer>}
    */
   async readBytes(n) {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset + n <= buffer.length) {
+      const result = buffer.subarray(offset, offset + n);
+      this.#offset = offset + n;
+      this.#position += n;
+      return result;
+    }
     await this.#ensure(n);
     const result = this.#buffer.subarray(this.#offset, this.#offset + n);
     this.#offset += n;
@@ -132,6 +140,13 @@ export default class StreamReader {
    * @returns {Promise<number>} unsigned 8-bit integer
    */
   async readUInt8() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset < buffer.length) {
+      this.#offset = offset + 1;
+      this.#position++;
+      return buffer[offset];
+    }
     await this.#ensure(1);
     this.#position++;
     return this.#buffer[this.#offset++];
@@ -141,6 +156,13 @@ export default class StreamReader {
    * @returns {Promise<number>} signed 8-bit integer
    */
   async readByte() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset < buffer.length) {
+      this.#offset = offset + 1;
+      this.#position++;
+      return buffer.readInt8(offset);
+    }
     await this.#ensure(1);
     this.#position++;
     return this.#buffer.readInt8(this.#offset++);
@@ -150,6 +172,14 @@ export default class StreamReader {
    * @returns {Promise<number>} signed 16-bit big-endian integer
    */
   async readInt16BE() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset + 2 <= buffer.length) {
+      const v = buffer.readInt16BE(offset);
+      this.#offset = offset + 2;
+      this.#position += 2;
+      return v;
+    }
     await this.#ensure(2);
     const v = this.#buffer.readInt16BE(this.#offset);
     this.#offset += 2;
@@ -161,6 +191,14 @@ export default class StreamReader {
    * @returns {Promise<number>} signed 32-bit big-endian integer
    */
   async readInt32BE() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset + 4 <= buffer.length) {
+      const v = buffer.readInt32BE(offset);
+      this.#offset = offset + 4;
+      this.#position += 4;
+      return v;
+    }
     await this.#ensure(4);
     const v = this.#buffer.readInt32BE(this.#offset);
     this.#offset += 4;
@@ -172,6 +210,14 @@ export default class StreamReader {
    * @returns {Promise<bigint>} signed 64-bit big-endian integer
    */
   async readBigInt64BE() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset + 8 <= buffer.length) {
+      const v = buffer.readBigInt64BE(offset);
+      this.#offset = offset + 8;
+      this.#position += 8;
+      return v;
+    }
     await this.#ensure(8);
     const v = this.#buffer.readBigInt64BE(this.#offset);
     this.#offset += 8;
@@ -183,6 +229,14 @@ export default class StreamReader {
    * @returns {Promise<number>} 32-bit big-endian float
    */
   async readFloatBE() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset + 4 <= buffer.length) {
+      const v = buffer.readFloatBE(offset);
+      this.#offset = offset + 4;
+      this.#position += 4;
+      return v;
+    }
     await this.#ensure(4);
     const v = this.#buffer.readFloatBE(this.#offset);
     this.#offset += 4;
@@ -194,6 +248,14 @@ export default class StreamReader {
    * @returns {Promise<number>} 64-bit big-endian double
    */
   async readDoubleBE() {
+    const buffer = this.#buffer;
+    const offset = this.#offset;
+    if (offset + 8 <= buffer.length) {
+      const v = buffer.readDoubleBE(offset);
+      this.#offset = offset + 8;
+      this.#position += 8;
+      return v;
+    }
     await this.#ensure(8);
     const v = this.#buffer.readDoubleBE(this.#offset);
     this.#offset += 8;
