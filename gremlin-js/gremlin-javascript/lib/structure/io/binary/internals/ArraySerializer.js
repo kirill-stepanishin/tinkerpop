@@ -81,17 +81,35 @@ export default class ArraySerializer {
       throw new Error(`ArraySerializer: {length}=${length} is less than zero`);
     }
 
+    if (!isBulked) {
+      // The final size is already known from {length}, so preallocate the array and
+      // assign by index instead of push()-ing, which avoids repeated backing-store growth.
+      const v = new Array(length);
+      for (let i = 0; i < length; i++) {
+        v[i] = await this.ioc.anySerializer.deserialize(reader);
+      }
+      return v;
+    }
+
+    // Bulked: the final size is the sum of per-element bulkCounts, which isn't known
+    // up front, so keep growing the array with push().
     const v = [];
     for (let i = 0; i < length; i++) {
       const value = await this.ioc.anySerializer.deserialize(reader);
 
-      if (isBulked) {
-        const bulkCount = await reader.readBigInt64BE();
-        for (let j = 0n; j < bulkCount; j++) {
+      const bulkCount = await reader.readBigInt64BE();
+      if (bulkCount <= Number.MAX_SAFE_INTEGER) {
+        // Convert to a Number once so the expansion loop uses cheap Number comparisons
+        // instead of BigInt comparisons on every iteration.
+        const n = Number(bulkCount);
+        for (let j = 0; j < n; j++) {
           v.push(value);
         }
       } else {
-        v.push(value);
+        // Astronomically-rare overflow case: fall back to BigInt-compared iteration.
+        for (let j = 0n; j < bulkCount; j++) {
+          v.push(value);
+        }
       }
     }
 
