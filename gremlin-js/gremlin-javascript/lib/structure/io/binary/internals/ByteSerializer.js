@@ -54,8 +54,8 @@ export default class ByteSerializer {
    * @param {number} typeCode
    * @returns {Promise<number>}
    */
-  async deserializeValue(reader, valueFlag, typeCode) {
-    return await reader.readByte();
+  deserializeValue(reader, valueFlag, typeCode) {
+    return reader.readByte();
   }
 
   /**

@@ -58,8 +58,8 @@ export default class FloatSerializer {
    * @param {number} typeCode
    * @returns {Promise<number>}
    */
-  async deserializeValue(reader, valueFlag, typeCode) {
-    return await reader.readFloatBE();
+  deserializeValue(reader, valueFlag, typeCode) {
+    return reader.readFloatBE();
   }
 
   /**

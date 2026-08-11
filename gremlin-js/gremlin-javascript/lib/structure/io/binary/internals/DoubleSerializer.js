@@ -58,8 +58,8 @@ export default class DoubleSerializer {
    * @param {number} typeCode
    * @returns {Promise<number>}
    */
-  async deserializeValue(reader, valueFlag, typeCode) {
-    return await reader.readDoubleBE();
+  deserializeValue(reader, valueFlag, typeCode) {
+    return reader.readDoubleBE();
   }
 
   /**

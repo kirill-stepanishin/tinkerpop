@@ -58,8 +58,8 @@ export default class ShortSerializer {
    * @param {number} typeCode
    * @returns {Promise<number>}
    */
-  async deserializeValue(reader, valueFlag, typeCode) {
-    return await reader.readInt16BE();
+  deserializeValue(reader, valueFlag, typeCode) {
+    return reader.readInt16BE();
   }
 
   /**

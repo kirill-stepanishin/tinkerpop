@@ -70,8 +70,8 @@ export default class IntSerializer {
    * @param {StreamReader} reader
    * @returns {Promise<number>}
    */
-  async deserializeBare(reader) {
-    return await reader.readInt32BE();
+  deserializeBare(reader) {
+    return reader.readInt32BE();
   }
 
   /**
@@ -80,8 +80,8 @@ export default class IntSerializer {
    * @param {number} typeCode
    * @returns {Promise<number>}
    */
-  async deserializeValue(reader, valueFlag, typeCode) {
-    return await reader.readInt32BE();
+  deserializeValue(reader, valueFlag, typeCode) {
+    return reader.readInt32BE();
   }
 
   /**
