@@ -94,15 +94,16 @@ export default class GraphBinaryReader {
     const bulked = (await reader.readUInt8()) === 0x01;
 
     // {result_data} stream — yield values until EndOfStream marker
+    const anySerializer = this.ioc.anySerializer;
     while (true) {
-      const value = await this.ioc.anySerializer.deserialize(reader);
+      const value = await anySerializer.deserialize(reader);
 
       if (value === END_OF_STREAM) {
         break;
       }
 
       if (bulked) {
-        const bulk = await this.ioc.longSerializer.deserialize(reader);
+        const bulk = await this.#readBulkCount(reader);
         yield new Traverser(value, Number(bulk));
       } else {
         yield value;
@@ -143,15 +144,16 @@ export default class GraphBinaryReader {
 
     // {result_data} — collect all values
     const data = [];
+    const anySerializer = this.ioc.anySerializer;
     while (true) {
-      const value = await this.ioc.anySerializer.deserialize(reader);
+      const value = await anySerializer.deserialize(reader);
 
       if (value === END_OF_STREAM) {
         break;
       }
 
       if (bulked) {
-        const bulk = await this.ioc.longSerializer.deserialize(reader);
+        const bulk = await this.#readBulkCount(reader);
         data.push({ v: value, bulk: Number(bulk) });
       } else {
         data.push(value);
@@ -165,6 +167,35 @@ export default class GraphBinaryReader {
       status,
       result: { data, bulked },
     };
+  }
+
+  /**
+   * Read a fully-qualified, non-null bulk count {type_code}{value_flag}{long_value} in a single
+   * awaited read, parsing the 10-byte chunk synchronously. Avoids the extra awaited reads and the
+   * BigInt allocation that LongSerializer#deserialize incurs for the common small-bulk case.
+   * A null/absent bulk (value_flag=0x01) is a protocol violation for bulk counts and throws.
+   * @param {StreamReader} reader
+   * @returns {Promise<number|bigint>}
+   */
+  async #readBulkCount(reader) {
+    const chunk = await reader.readBytes(10);
+
+    const type_code = chunk[0];
+    if (type_code !== this.ioc.DataType.LONG) {
+      throw new Error(`GraphBinaryReader: unexpected bulk {type_code}=0x${type_code.toString(16)}`);
+    }
+
+    const value_flag = chunk[1];
+    if (value_flag !== 0x00) {
+      throw new Error(`GraphBinaryReader: unexpected bulk {value_flag}=0x${value_flag.toString(16)}`);
+    }
+
+    const hi = chunk.readInt32BE(2);
+    if (hi === 0) {
+      return chunk.readUInt32BE(6);
+    }
+    const v = chunk.readBigInt64BE(2);
+    return v >= Number.MIN_SAFE_INTEGER && v <= Number.MAX_SAFE_INTEGER ? Number(v) : v;
   }
 
   /**
