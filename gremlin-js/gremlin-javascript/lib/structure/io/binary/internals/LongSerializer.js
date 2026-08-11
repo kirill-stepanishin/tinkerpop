@@ -59,9 +59,18 @@ export default class LongSerializer {
    * @returns {Promise<number|bigint>}
    */
   async deserializeValue(reader, valueFlag, typeCode) {
-    let v = await reader.readBigInt64BE();
+    const buf = await reader.readBytes(8);
+    const high = buf.readInt32BE(0);
+    const low = buf.readUInt32BE(4);
+    // Fast path: when |high| is within this conservative window, high * 2^32 + low is
+    // provably within the JS safe-integer range, so the double result is exact and no
+    // BigInt allocation is needed.
+    if (high >= -0x1fffff && high <= 0x1fffff) {
+      return high * 4294967296 + low;
+    }
+    const v = buf.readBigInt64BE(0);
     if (v >= Number.MIN_SAFE_INTEGER && v <= Number.MAX_SAFE_INTEGER) {
-      v = Number(v);
+      return Number(v);
     }
     return v;
   }
